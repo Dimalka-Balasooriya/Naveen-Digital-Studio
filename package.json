@@ -2,14 +2,39 @@
   "name": "naveen-digital-studio-management",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "Full-stack order and production management system for Naveen Digital Studio.",
   "scripts": {
     "install:all": "npm install --prefix server && npm install --prefix client",
     "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
-    "build": "npm run build --prefix client",
+    "build": "vite build client --config client/vite.config.js",
+    "vercel-build": "vite build client --config client/vite.config.js",
     "start": "npm run start --prefix server"
   },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.468.0",
+    "morgan": "^1.10.0",
+    "mysql2": "^3.10.3",
+    "pdfkit": "^0.18.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.24.1",
+    "recharts": "^2.12.7",
+    "zod": "^3.23.8"
+  },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "concurrently": "^8.2.2",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.4",
+    "vite": "^5.3.3"
   }
 }

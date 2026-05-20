@@ -10,9 +10,11 @@ export const pool = mysql.createPool({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: Number(process.env.DB_CONNECTION_LIMIT || 3),
   queueLimit: 0,
-  namedPlaceholders: true
+  namedPlaceholders: true,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0
 });
 
 export async function query(sql, params = {}) {

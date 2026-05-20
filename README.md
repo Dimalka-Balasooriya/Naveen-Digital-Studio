@@ -1,136 +1,97 @@
 # Naveen Digital Studio Management System
 
-Full-stack Order and Production Management System for Naveen Digital Studio.
+Single-link full-stack app for Naveen Digital Studio.
 
-## Stack
+This project is now prepared for **Vercel-only hosting**:
 
-- Frontend: React, Vite, Tailwind CSS
-- Backend: Node.js, Express
-- Database: MySQL, Railway MySQL compatible
-- Auth: JWT
-- Hosting: Vercel for `client/`, Render for `server/`
+- `client/` contains the Vite React frontend.
+- `server/` contains the existing Express app logic.
+- `api/[...path].js` exposes the Express routes as Vercel Serverless API routes.
+- `database/` contains MySQL schema, seed data, and migrations.
+
+The final hosted app can run from one URL such as:
+
+```text
+https://naveen-digital-studio.vercel.app
+```
+
+## How It Works on Vercel
+
+Frontend pages are served by Vercel from `client/dist`.
+
+Backend APIs are served from the same domain under `/api`:
+
+```text
+/api/auth/login
+/api/orders
+/api/customers/search
+/api/employees
+/api/commissions
+/api/reports
+/api/production
+/api/analytics
+```
+
+The frontend uses relative API URLs by default, so it can call the backend from the same Vercel link.
 
 ## Project Structure
 
 ```text
-client/        Vercel frontend
-server/        Render backend API
-database/      MySQL schema, seed data, migrations
-render.yaml    Render blueprint
+api/           Vercel Serverless API entrypoint
+client/        Vite React frontend
+server/        Express routes, middleware, database logic
+database/      MySQL schema, sample data, migrations
+vercel.json    Vercel build/output/function config
 ```
 
 ## Environment Variables
 
-### Client: `client/.env`
+Set these in **Vercel Project Settings > Environment Variables**:
+
+```env
+DB_HOST=your_railway_mysql_host
+DB_PORT=3306
+DB_USER=your_railway_mysql_user
+DB_PASSWORD=your_railway_mysql_password
+DB_NAME=your_railway_mysql_database
+JWT_SECRET=replace-with-a-long-random-secret
+JWT_EXPIRES_IN=7d
+DB_CONNECTION_LIMIT=3
+```
+
+`VITE_API_URL` is not required on Vercel because the frontend uses `/api` by default.
+
+For local development, you can use:
 
 ```env
 VITE_API_URL=http://localhost:5000/api
 ```
 
-For Vercel, set it to your Render backend:
-
-```env
-VITE_API_URL=https://your-render-service.onrender.com/api
-```
-
-### Server: `server/.env`
-
-```env
-NODE_ENV=development
-PORT=5000
-CLIENT_URL=http://localhost:5173
-
-DB_HOST=localhost
-DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=your_mysql_password
-DB_NAME=naveen_digital_studio
-
-JWT_SECRET=replace-with-a-long-random-secret
-JWT_EXPIRES_IN=7d
-```
-
-For Render, set `CLIENT_URL` to your Vercel URL:
-
-```env
-CLIENT_URL=https://your-vercel-app.vercel.app
-```
-
-Multiple frontend origins are supported with commas:
-
-```env
-CLIENT_URL=https://your-vercel-app.vercel.app,https://www.yourdomain.com
-```
-
-## Local Setup
-
-1. Create the database:
-
-```sql
-CREATE DATABASE naveen_digital_studio CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-```
-
-2. Import schema and sample data:
-
-```bash
-mysql -u root -p naveen_digital_studio < database/schema.sql
-mysql -u root -p naveen_digital_studio < database/sample-data.sql
-```
-
-3. Copy env files:
-
-```bash
-cp server/.env.example server/.env
-cp client/.env.example client/.env
-```
-
-4. Edit `server/.env` and `client/.env`.
-
-5. Install dependencies:
-
-```bash
-npm run install:all
-```
-
-6. Run locally:
-
-```bash
-npm run dev
-```
-
-## Demo Accounts
-
-After importing sample data:
-
-- Owner: `admin@naveendigitalstudio.com` / `password123`
-- Production: `kasun@naveendigitalstudio.com` / `password123`
-- Production: `amali@naveendigitalstudio.com` / `password123`
-
-Change all demo passwords before real shop use.
+inside `client/.env` when running the frontend and backend separately.
 
 ## Railway MySQL Setup
 
 1. Create a Railway project.
 2. Add a MySQL database service.
 3. Open the MySQL service variables.
-4. Copy these values into Render backend environment variables:
+4. Copy Railway values into Vercel:
 
 ```env
-DB_HOST=<Railway MYSQLHOST>
-DB_PORT=<Railway MYSQLPORT>
-DB_USER=<Railway MYSQLUSER>
-DB_PASSWORD=<Railway MYSQLPASSWORD>
-DB_NAME=<Railway MYSQLDATABASE>
+DB_HOST=<MYSQLHOST>
+DB_PORT=<MYSQLPORT>
+DB_USER=<MYSQLUSER>
+DB_PASSWORD=<MYSQLPASSWORD>
+DB_NAME=<MYSQLDATABASE>
 ```
 
-5. Import SQL into Railway MySQL using Railway's connection details:
+5. Import schema and sample data into Railway MySQL:
 
 ```bash
 mysql -h <MYSQLHOST> -P <MYSQLPORT> -u <MYSQLUSER> -p <MYSQLDATABASE> < database/schema.sql
 mysql -h <MYSQLHOST> -P <MYSQLPORT> -u <MYSQLUSER> -p <MYSQLDATABASE> < database/sample-data.sql
 ```
 
-If you are updating an existing database, run migrations as needed:
+For an existing database, run migrations as needed:
 
 ```bash
 mysql -h <MYSQLHOST> -P <MYSQLPORT> -u <MYSQLUSER> -p <MYSQLDATABASE> < database/advanced-migration.sql
@@ -138,88 +99,100 @@ mysql -h <MYSQLHOST> -P <MYSQLPORT> -u <MYSQLUSER> -p <MYSQLDATABASE> < database
 mysql -h <MYSQLHOST> -P <MYSQLPORT> -u <MYSQLUSER> -p <MYSQLDATABASE> < database/admin-role-assignment-report-migration.sql
 ```
 
-## Deploy Backend to Render
+## Deploy to Vercel from GitHub
 
 1. Push this project to GitHub.
-2. In Render, create a new **Web Service**.
-3. Connect the GitHub repo.
-4. Set:
-   - Root Directory: `server`
-   - Build Command: `npm install`
-   - Start Command: `npm start`
-5. Add environment variables:
+2. Open Vercel and click **Add New Project**.
+3. Import the GitHub repository.
+4. Use the project root, not `client/`, as the Vercel root.
+5. Vercel will use `vercel.json`.
+6. Confirm these settings:
+   - Build Command: `npm run vercel-build`
+   - Output Directory: `client/dist`
+7. Add the database/JWT environment variables listed above.
+8. Deploy.
 
-```env
-NODE_ENV=production
-PORT=10000
-CLIENT_URL=https://your-vercel-app.vercel.app
-DB_HOST=<Railway MYSQLHOST>
-DB_PORT=<Railway MYSQLPORT>
-DB_USER=<Railway MYSQLUSER>
-DB_PASSWORD=<Railway MYSQLPASSWORD>
-DB_NAME=<Railway MYSQLDATABASE>
-JWT_SECRET=<long-random-secret>
-JWT_EXPIRES_IN=7d
-```
-
-6. Deploy and copy the Render service URL.
-7. Test:
+After deploy, test:
 
 ```text
-https://your-render-service.onrender.com/api/health
+https://your-vercel-app.vercel.app/api/health
 ```
 
-The included `render.yaml` can also be used as a Render blueprint.
+Then open:
 
-## Deploy Frontend to Vercel
+```text
+https://your-vercel-app.vercel.app
+```
 
-1. In Vercel, import the same GitHub repo.
-2. Set:
-   - Root Directory: `client`
-   - Framework Preset: Vite
-   - Build Command: `npm run build`
-   - Output Directory: `dist`
-3. Add environment variable:
+## Local Development
+
+1. Copy env examples:
+
+```bash
+cp server/.env.example server/.env
+cp client/.env.example client/.env
+```
+
+2. For local frontend-to-backend development, set `client/.env`:
 
 ```env
-VITE_API_URL=https://your-render-service.onrender.com/api
+VITE_API_URL=http://localhost:5000/api
 ```
 
-4. Deploy.
-5. Copy the Vercel URL and add it to Render's backend `CLIENT_URL`.
-6. Redeploy the Render backend after updating `CLIENT_URL`.
-
-## Production Notes
-
-- Do not commit real `.env` files.
-- Use a strong `JWT_SECRET`.
-- Change demo account passwords.
-- Keep `CLIENT_URL` set to the exact Vercel domain to allow CORS.
-- Keep `VITE_API_URL` set to the Render API URL ending in `/api`.
-- Railway MySQL credentials must be added to Render, not Vercel.
-
-## Useful Scripts
-
-Root:
+3. Install dependencies:
 
 ```bash
 npm run install:all
-npm run dev
-npm run build
+npm install
 ```
 
-Client:
+4. Run local frontend and backend:
 
 ```bash
 npm run dev
-npm run build
-npm run preview
 ```
 
-Server:
+Frontend:
+
+```text
+http://localhost:5173
+```
+
+Backend:
+
+```text
+http://localhost:5000/api/health
+```
+
+## Build Check
+
+Run:
 
 ```bash
-npm run dev
 npm run build
-npm start
 ```
+
+For Vercel build:
+
+```bash
+npm run vercel-build
+```
+
+## Demo Accounts
+
+After importing `database/sample-data.sql`:
+
+- Owner: `admin@naveendigitalstudio.com` / `password123`
+- Production: `kasun@naveendigitalstudio.com` / `password123`
+- Production: `amali@naveendigitalstudio.com` / `password123`
+
+Change all demo passwords before real shop use.
+
+## Notes
+
+- No Render deployment is required.
+- All backend routes are available under `/api` on the same Vercel domain.
+- MySQL credentials are stored only in Vercel environment variables.
+- `mysql2/promise` is used for database access.
+- The MySQL pool is configured with a low connection limit for serverless use.
+- Reports PDF/Excel APIs are also served from Vercel Serverless Functions.
