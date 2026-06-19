@@ -107,7 +107,7 @@ mysql -h <MYSQLHOST> -P <MYSQLPORT> -u <MYSQLUSER> -p <MYSQLDATABASE> < database
 4. Use the project root, not `client/`, as the Vercel root.
 5. Vercel will use `vercel.json`.
 6. Confirm these settings:
-   - Build Command: `npm run vercel-build`
+   - Build Command: `npm run build`
    - Output Directory: `client/dist`
 7. Add the database/JWT environment variables listed above.
 8. Deploy.
@@ -172,21 +172,19 @@ Run:
 npm run build
 ```
 
-For Vercel build:
-
-```bash
-npm run vercel-build
-```
-
 ## Demo Accounts
 
-After importing `database/sample-data.sql`:
+For a fresh database, run:
 
-- Owner: `admin@naveendigitalstudio.com` / `password123`
-- Production: `kasun@naveendigitalstudio.com` / `password123`
-- Production: `amali@naveendigitalstudio.com` / `password123`
+```bash
+npm run seed:admin
+```
 
-Change all demo passwords before real shop use.
+Default seed admin:
+
+- Owner: `admin@naveendigitalstudio.com` / `Admin@123`
+
+Create CO_ADMIN and PRODUCTION_EMPLOYEE accounts from the Employees page with unique passwords before real shop use.
 
 ## Notes
 

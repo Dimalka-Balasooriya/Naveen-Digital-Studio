@@ -13,14 +13,30 @@ CREATE TABLE employees (
   password_hash VARCHAR(255) NOT NULL,
   avatar_url VARCHAR(255),
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  deleted_at TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_employees_role FOREIGN KEY (role_id) REFERENCES roles(id)
 );
 
+CREATE TABLE attendance_logs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  employee_id INT NOT NULL,
+  attendance_date DATE NOT NULL,
+  login_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  logout_time TIMESTAMP NULL,
+  logout_status VARCHAR(30) NOT NULL DEFAULT 'PENDING',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_attendance_employee FOREIGN KEY (employee_id) REFERENCES employees(id),
+  INDEX idx_attendance_employee_date (employee_id, attendance_date),
+  INDEX idx_attendance_date (attendance_date)
+);
+
 CREATE TABLE facebook_pages (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(120) NOT NULL UNIQUE,
+  whatsapp_number VARCHAR(30),
   url VARCHAR(255),
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -52,6 +68,14 @@ CREATE TABLE production_tasks (
   is_active BOOLEAN NOT NULL DEFAULT TRUE
 );
 
+CREATE TABLE courier_services (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(120) NOT NULL UNIQUE,
+  phone VARCHAR(30),
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE customers (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(140) NOT NULL,
@@ -68,8 +92,11 @@ CREATE TABLE orders (
   customer_id INT NOT NULL,
   product_id INT NOT NULL,
   facebook_page_id INT,
+  courier_service_id INT,
+  tracking_number VARCHAR(120),
   status_id INT NOT NULL,
   assigned_employee_id INT,
+  assigned_co_admin_id INT,
   needed_date DATE NOT NULL,
   is_fast BOOLEAN NOT NULL DEFAULT FALSE,
   quantity INT NOT NULL DEFAULT 1,
@@ -82,15 +109,22 @@ CREATE TABLE orders (
   created_by INT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  deleted_at TIMESTAMP NULL,
+  deleted_by INT NULL,
+  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+  archived_from_active_list BOOLEAN NOT NULL DEFAULT FALSE,
   CONSTRAINT fk_orders_customer FOREIGN KEY (customer_id) REFERENCES customers(id),
   CONSTRAINT fk_orders_product FOREIGN KEY (product_id) REFERENCES products(id),
   CONSTRAINT fk_orders_facebook_page FOREIGN KEY (facebook_page_id) REFERENCES facebook_pages(id),
+  CONSTRAINT fk_orders_courier_service FOREIGN KEY (courier_service_id) REFERENCES courier_services(id),
   CONSTRAINT fk_orders_status FOREIGN KEY (status_id) REFERENCES order_statuses(id),
   CONSTRAINT fk_orders_assigned_employee FOREIGN KEY (assigned_employee_id) REFERENCES employees(id),
+  CONSTRAINT fk_orders_assigned_co_admin FOREIGN KEY (assigned_co_admin_id) REFERENCES employees(id),
   CONSTRAINT fk_orders_created_by FOREIGN KEY (created_by) REFERENCES employees(id),
   INDEX idx_orders_needed_date (needed_date),
   INDEX idx_orders_fast (is_fast),
-  INDEX idx_orders_assignee (assigned_employee_id)
+  INDEX idx_orders_assignee (assigned_employee_id),
+  INDEX idx_orders_assigned_co_admin (assigned_co_admin_id)
 );
 
 CREATE TABLE order_task_completions (
@@ -135,6 +169,18 @@ CREATE TABLE order_activity (
   CONSTRAINT fk_activity_employee FOREIGN KEY (employee_id) REFERENCES employees(id)
 );
 
+CREATE TABLE order_bills (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  order_id INT NOT NULL,
+  manual_price DECIMAL(10,2) NOT NULL,
+  generated_by_id INT NOT NULL,
+  generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_order_bills_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+  CONSTRAINT fk_order_bills_generated_by FOREIGN KEY (generated_by_id) REFERENCES employees(id),
+  INDEX idx_order_bills_order (order_id),
+  INDEX idx_order_bills_generated_at (generated_at)
+);
+
 CREATE TABLE order_status_history (
   id INT AUTO_INCREMENT PRIMARY KEY,
   order_id INT NOT NULL,
@@ -154,6 +200,8 @@ CREATE TABLE commissions (
   id INT AUTO_INCREMENT PRIMARY KEY,
   order_id INT NOT NULL,
   employee_id INT NOT NULL,
+  user_role VARCHAR(50),
+  commission_type VARCHAR(50) NOT NULL DEFAULT 'PRODUCTION',
   assigned_by INT,
   commission_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
   assignment_started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -161,6 +209,8 @@ CREATE TABLE commissions (
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   is_payable BOOLEAN NOT NULL DEFAULT FALSE,
   paid_at TIMESTAMP NULL,
+  cancelled_reason VARCHAR(255),
+  cancelled_at TIMESTAMP NULL,
   notes TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

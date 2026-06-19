@@ -3,13 +3,20 @@ import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Too
 import { api } from '../../services/api';
 import StatCard from '../../components/StatCard';
 import StatusBadge from '../../components/StatusBadge';
+import { useAuth } from '../../context/AuthContext';
+import { isCoAdmin } from '../../utils/roles';
 
 export default function AdminDashboard() {
+  const { user } = useAuth();
   const [data, setData] = useState(null);
+  const [myCommission, setMyCommission] = useState(null);
 
   useEffect(() => {
     api.get('/analytics').then((response) => setData(response.data));
-  }, []);
+    if (isCoAdmin(user?.role)) {
+      api.get('/commissions/summary/me').then((response) => setMyCommission(response.data));
+    }
+  }, [user?.role]);
 
   const summary = data?.summary || {};
   const commissionTotal = (data?.commissionTotals || []).reduce((sum, item) => sum + Number(item.total || 0), 0);
@@ -17,15 +24,33 @@ export default function AdminDashboard() {
   return (
     <div className="space-y-6">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Daily Qty" value={summary.daily_order_quantity} tone="teal" />
-        <StatCard label="Weekly Qty" value={summary.weekly_order_quantity} />
-        <StatCard label="Monthly Qty" value={summary.monthly_order_quantity} />
+        <StatCard label="Daily Orders" value={summary.daily_order_quantity} tone="teal" />
+        <StatCard label="Weekly Orders" value={summary.weekly_order_quantity} />
+        <StatCard label="Monthly Orders" value={summary.monthly_order_quantity} />
         <StatCard label="Fast Orders" value={summary.fast_orders_count} tone="orange" />
-        <StatCard label="Completed Qty" value={summary.completed_quantity} tone="green" />
-        <StatCard label="Pending Qty" value={summary.pending_quantity} />
-        <StatCard label="Returned Qty" value={summary.returned_quantity} tone="rose" />
+        <StatCard label="Completed Orders" value={summary.completed_quantity} tone="green" />
+        <StatCard label="Pending Orders" value={summary.pending_quantity} />
+        <StatCard label="Returned Orders" value={summary.returned_quantity} tone="rose" />
         <StatCard label="Commission Total" value={`Rs. ${commissionTotal.toLocaleString()}`} tone="teal" />
       </div>
+
+      {isCoAdmin(user?.role) ? (
+        <section className="rounded-md border border-teal-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-teal-700">My CO_ADMIN Commission</p>
+              <h3 className="mt-1 text-lg font-semibold text-slate-950">Personal Commission Summary</h3>
+            </div>
+            <p className="text-sm text-slate-500">{user?.name}</p>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard label="Today Commission" value={`Rs. ${Number(myCommission?.today_commission || 0).toLocaleString()}`} tone="teal" />
+            <StatCard label="Weekly Commission" value={`Rs. ${Number(myCommission?.weekly_commission || 0).toLocaleString()}`} />
+            <StatCard label="Monthly Commission" value={`Rs. ${Number(myCommission?.monthly_commission || 0).toLocaleString()}`} />
+            <StatCard label="Total Commission" value={`Rs. ${Number(myCommission?.total_commission || 0).toLocaleString()}`} tone="green" />
+          </div>
+        </section>
+      ) : null}
 
       <div className="grid gap-4 xl:grid-cols-3">
         {[
@@ -69,6 +94,7 @@ export default function AdminDashboard() {
                   <p className="text-sm font-semibold text-slate-950">#{index + 1} {employee.name}</p>
                   <span className="rounded bg-teal-50 px-2 py-1 text-xs font-semibold text-teal-700">{employee.completed_orders || 0} completed</span>
                 </div>
+                <p className="mt-1 text-sm text-slate-600">Assigned Orders: {employee.assigned_orders || 0} · Pending {employee.pending_orders || 0}</p>
                 <p className="mt-1 text-sm text-slate-600">Avg {employee.avg_completion_hours || 0} hours · Rs. {Number(employee.commission_total || 0).toLocaleString()}</p>
               </div>
             ))}

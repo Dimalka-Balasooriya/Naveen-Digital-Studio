@@ -13,6 +13,7 @@ export default function ProductionDashboard() {
   const [allCommissions, setAllCommissions] = useState([]);
   const [commissionSearch, setCommissionSearch] = useState('');
   const [commissionMonth, setCommissionMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [notice, setNotice] = useState('');
 
   async function load() {
     const [ordersRes, statsRes, remindersRes, statusesRes, commissionsRes, allCommissionsRes] = await Promise.all([
@@ -50,7 +51,8 @@ export default function ProductionDashboard() {
   }
 
   async function updateStatus(order, statusId) {
-    await api.patch(`/orders/${order.id}/status`, { status_id: Number(statusId), note: 'Updated by production employee' });
+    const { data } = await api.patch(`/orders/${order.id}/status`, { status_id: Number(statusId), note: 'Updated by production employee' });
+    setNotice(data.message || 'Status updated.');
     await load();
   }
 
@@ -61,6 +63,11 @@ export default function ProductionDashboard() {
 
   return (
     <div className="space-y-6">
+      {notice ? (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+          {notice}
+        </div>
+      ) : null}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Assigned Orders" value={stats.assigned_orders} />
         <StatCard label="Completed Orders" value={stats.completed_orders} tone="green" />
@@ -74,6 +81,8 @@ export default function ProductionDashboard() {
           {commissions.map((commission) => (
             <div key={commission.id} className="rounded-md border border-slate-200 p-3">
               <p className="font-semibold text-slate-950">{commission.order_number}</p>
+              {commission.paid_at ? <p className="mt-1 text-xs font-semibold text-emerald-700">Paid amount: Rs. {Number(commission.paid_amount || 0).toLocaleString()}</p> : null}
+              {commission.cancelled_reason ? <p className="mt-1 text-xs font-semibold text-rose-600">{commission.cancelled_reason}</p> : null}
               <p className="mt-1 text-sm text-slate-600">Rs. {Number(commission.commission_amount).toLocaleString()} · {commission.is_payable ? 'Payable' : 'Pending delivery'}</p>
             </div>
           ))}
@@ -111,7 +120,7 @@ export default function ProductionDashboard() {
               <tr>
                 <th className="px-4 py-3">Employee</th>
                 <th className="px-4 py-3">Role</th>
-                <th className="px-4 py-3">Assigned</th>
+                <th className="px-4 py-3">Assigned Orders</th>
                 <th className="px-4 py-3">Completed</th>
                 <th className="px-4 py-3">Pending</th>
                 <th className="px-4 py-3">Monthly</th>
@@ -130,7 +139,7 @@ export default function ProductionDashboard() {
                     </span>
                   </td>
                   <td className="px-4 py-3 capitalize">{item.employee_role}</td>
-                  <td className="px-4 py-3">{item.total_orders_assigned || 0}</td>
+                  <td className="px-4 py-3 font-semibold">Assigned Orders: {item.total_orders_assigned || 0}</td>
                   <td className="px-4 py-3">{item.completed_orders || 0}</td>
                   <td className="px-4 py-3">{item.pending_orders || 0}</td>
                   <td className="px-4 py-3 font-semibold">Rs. {Number(item.monthly_commission_total || 0).toLocaleString()}</td>

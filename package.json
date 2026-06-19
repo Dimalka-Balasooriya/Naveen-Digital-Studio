@@ -7,11 +7,12 @@
   "scripts": {
     "install:all": "npm install --prefix server && npm install --prefix client",
     "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
-    "build": "vite build client --config client/vite.config.js",
-    "vercel-build": "vite build client --config client/vite.config.js",
+    "build": "node scripts/build-client.js",
+    "seed:admin": "npm run seed:admin --prefix server",
     "start": "npm run start --prefix server"
   },
   "dependencies": {
+    "axios": "^1.16.1",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

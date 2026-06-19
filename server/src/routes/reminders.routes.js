@@ -10,8 +10,8 @@ router.use(authenticate);
 router.get('/', async (req, res, next) => {
   try {
     const params = {};
-    const filter = req.user.role === 'production' ? 'AND (r.employee_id = :employeeId OR r.employee_id IS NULL)' : '';
-    if (req.user.role === 'production') params.employeeId = req.user.id;
+    const filter = req.user.role === 'PRODUCTION_EMPLOYEE' ? 'AND (r.employee_id = :employeeId OR r.employee_id IS NULL)' : '';
+    if (req.user.role === 'PRODUCTION_EMPLOYEE') params.employeeId = req.user.id;
 
     const reminders = await query(
       `SELECT r.*, o.order_number, e.name AS employee_name

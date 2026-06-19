@@ -1,0 +1,7 @@
+Starting API from C:\Users\HP\Documents\Codex\2026-05-18\create-a-full-stack-order-and\server 
+
+> naveen-digital-studio-api@1.0.0 start
+> node src/server.js
+
+Naveen Digital Studio API running on port 5000
+^C^C

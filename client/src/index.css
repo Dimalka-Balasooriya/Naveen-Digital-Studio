@@ -24,3 +24,25 @@ textarea {
   background: #cbd5e1;
   border-radius: 999px;
 }
+
+@media print {
+  aside,
+  header,
+  .no-print {
+    display: none !important;
+  }
+
+  main,
+  .lg\:ml-72 {
+    margin-left: 0 !important;
+  }
+
+  body {
+    background: #ffffff;
+  }
+
+  .print-report {
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+}

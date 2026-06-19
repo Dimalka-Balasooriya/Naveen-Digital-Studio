@@ -12,3 +12,7 @@ export function isAdminRole(role) {
 export function isOwner(role) {
   return normalizeRole(role) === 'OWNER';
 }
+
+export function isCoAdmin(role) {
+  return normalizeRole(role) === 'CO_ADMIN';
+}

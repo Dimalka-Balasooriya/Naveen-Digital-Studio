@@ -8,6 +8,9 @@ import SettingsPage from './pages/admin/SettingsPage';
 import EmployeesPage from './pages/admin/EmployeesPage';
 import ReportsPage from './pages/admin/ReportsPage';
 import ProductionDashboard from './pages/production/ProductionDashboard';
+import HelpPage from './pages/HelpPage';
+import StockPage from './pages/StockPage';
+import MessagesPage from './pages/MessagesPage';
 import { isAdminRole, normalizeRole } from './utils/roles';
 
 function ProtectedRoute({ children, roles }) {
@@ -41,6 +44,9 @@ export default function App() {
         <Route path="admin/reports" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><ReportsPage /></ProtectedRoute>} />
         <Route path="admin/settings" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><SettingsPage /></ProtectedRoute>} />
         <Route path="production" element={<ProtectedRoute roles={['PRODUCTION_EMPLOYEE', 'OWNER', 'CO_ADMIN']}><ProductionDashboard /></ProtectedRoute>} />
+        <Route path="stock" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE']}><StockPage /></ProtectedRoute>} />
+        <Route path="messages" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE']}><MessagesPage /></ProtectedRoute>} />
+        <Route path="help" element={<HelpPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -1,5 +1,5 @@
 export default {
-  content: ['./index.html', './src/**/*.{js,jsx}'],
+  content: ['./client/index.html', './client/src/**/*.{js,jsx}', './index.html', './src/**/*.{js,jsx}'],
   theme: {
     extend: {
       fontFamily: {

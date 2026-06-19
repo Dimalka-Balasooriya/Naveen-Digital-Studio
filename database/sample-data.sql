@@ -8,10 +8,10 @@ INSERT INTO employees (id, role_id, name, email, phone, password_hash, is_active
   (2, 2, 'Kasun Perera', 'kasun@naveendigitalstudio.com', '+94770000002', '$2a$10$2OpcuJrXTMXOEvbkj0WizeNnodu.LsD3c80MxpwTvcg4ZIh/76qii', TRUE),
   (3, 2, 'Amali Silva', 'amali@naveendigitalstudio.com', '+94770000003', '$2a$10$2OpcuJrXTMXOEvbkj0WizeNnodu.LsD3c80MxpwTvcg4ZIh/76qii', TRUE);
 
-INSERT INTO facebook_pages (id, name, url, is_active) VALUES
-  (1, 'Naveen Digital Studio Main', 'https://facebook.com/naveendigitalstudio', TRUE),
-  (2, 'Custom Frames Sri Lanka', 'https://facebook.com/customframessl', TRUE),
-  (3, 'Wedding Memories Frames', 'https://facebook.com/weddingmemoriesframes', TRUE);
+INSERT INTO facebook_pages (id, name, whatsapp_number, url, is_active) VALUES
+  (1, 'Naveen Digital Studio Main', '+94770000001', 'https://facebook.com/naveendigitalstudio', TRUE),
+  (2, 'Custom Frames Sri Lanka', '+94770000002', 'https://facebook.com/customframessl', TRUE),
+  (3, 'Wedding Memories Frames', '+94770000003', 'https://facebook.com/weddingmemoriesframes', TRUE);
 
 INSERT INTO products (id, name, description, base_price, is_active) VALUES
   (1, 'A4 Photo Frame', 'Customized A4 printed frame', 2800.00, TRUE),
@@ -26,7 +26,8 @@ INSERT INTO order_statuses (id, name, color, sort_order, is_final, is_active) VA
   (4, 'Framing', 'orange', 4, FALSE, TRUE),
   (5, 'Ready', 'emerald', 5, FALSE, TRUE),
   (6, 'Completed', 'green', 6, TRUE, TRUE),
-  (7, 'Returned', 'rose', 7, TRUE, TRUE);
+  (7, 'Returned', 'rose', 7, TRUE, TRUE),
+  (8, 'Rearrange', 'purple', 8, FALSE, TRUE);
 
 INSERT INTO production_tasks (id, name, description, sort_order, is_active) VALUES
   (1, 'Confirm Photo Quality', 'Check image resolution and print suitability', 1, TRUE),

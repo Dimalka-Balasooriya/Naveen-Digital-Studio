@@ -1,12 +1,23 @@
 import { query } from '../config/db.js';
 
-export async function createOrderNumber() {
+async function run(connection, sql, params) {
+  if (connection) {
+    const [rows] = await connection.execute(sql, params);
+    return rows;
+  }
+  return query(sql, params);
+}
+
+export async function createOrderNumber(connection = null) {
   const today = new Date().toISOString().slice(0, 10).replaceAll('-', '');
-  const rows = await query(
-    'SELECT COUNT(*) AS count FROM orders WHERE order_number LIKE :prefix',
-    { prefix: `NDS-${today}-%` }
+  const rows = await run(
+    connection,
+    `SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(order_number, '-', -1) AS UNSIGNED)), 0) AS last_number
+     FROM orders
+     WHERE order_number LIKE ?`,
+    [`NDS-${today}-%`]
   );
-  const next = String((rows[0]?.count || 0) + 1).padStart(3, '0');
+  const next = String((rows[0]?.last_number || 0) + 1).padStart(3, '0');
   return `NDS-${today}-${next}`;
 }
 

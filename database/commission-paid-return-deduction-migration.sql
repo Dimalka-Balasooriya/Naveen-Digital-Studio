@@ -1,0 +1,3 @@
+ALTER TABLE commissions
+  ADD COLUMN IF NOT EXISTS paid_amount DECIMAL(10,2) NOT NULL DEFAULT 0 AFTER paid_at,
+  ADD COLUMN IF NOT EXISTS payment_notes VARCHAR(255) NULL AFTER paid_amount;

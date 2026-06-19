@@ -7,6 +7,7 @@
   "scripts": {
     "build": "node --check src/server.js",
     "dev": "nodemon src/server.js",
+    "seed:admin": "node src/scripts/seed-admin.js",
     "start": "node src/server.js"
   },
   "dependencies": {

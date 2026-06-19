@@ -15,8 +15,23 @@ JOIN roles new_role ON new_role.name = 'PRODUCTION_EMPLOYEE'
 SET e.role_id = new_role.id
 WHERE old_role.name = 'production';
 
-ALTER TABLE employees
-ADD COLUMN address TEXT NULL;
+SET @has_employee_address = (
+  SELECT COUNT(*)
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'employees'
+    AND COLUMN_NAME = 'address'
+);
+
+SET @employee_address_sql = IF(
+  @has_employee_address = 0,
+  'ALTER TABLE employees ADD COLUMN address TEXT NULL',
+  'SELECT ''employees.address already exists'''
+);
+
+PREPARE employee_address_stmt FROM @employee_address_sql;
+EXECUTE employee_address_stmt;
+DEALLOCATE PREPARE employee_address_stmt;
 
 CREATE TABLE IF NOT EXISTS order_assignments (
   id INT AUTO_INCREMENT PRIMARY KEY,

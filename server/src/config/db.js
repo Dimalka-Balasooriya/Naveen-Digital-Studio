@@ -3,6 +3,8 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const sslEnabled = String(process.env.DB_SSL || '').toLowerCase() === 'true';
+
 export const pool = mysql.createPool({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT || 3306),
@@ -14,10 +16,16 @@ export const pool = mysql.createPool({
   queueLimit: 0,
   namedPlaceholders: true,
   enableKeepAlive: true,
-  keepAliveInitialDelay: 0
+  keepAliveInitialDelay: 0,
+  ssl: sslEnabled ? { rejectUnauthorized: false } : undefined
 });
 
 export async function query(sql, params = {}) {
-  const [rows] = await pool.execute(sql, params);
-  return rows;
+  try {
+    const [rows] = await pool.execute(sql, params);
+    return rows;
+  } catch (error) {
+    console.error(`[db] Query failed: ${error.code || error.message}`);
+    throw error;
+  }
 }

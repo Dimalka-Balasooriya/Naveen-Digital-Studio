@@ -3,17 +3,52 @@ import { z } from 'zod';
 import { query } from '../config/db.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { ensureOrderTasks } from '../utils/orders.js';
-import { markOrderCommissionsPayable, recordStatusChange } from '../utils/tracking.js';
+import { applyOrderStatusWorkflow, recordStatusChange } from '../utils/tracking.js';
 
 const router = Router();
 
 router.use(authenticate, requireRole('production', 'admin'));
 
+let hasCheckedOrderArchiveColumns = false;
+async function ensureOrderArchiveSupport() {
+  if (hasCheckedOrderArchiveColumns) return;
+  const columns = await query(
+    `SELECT COLUMN_NAME
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'orders'
+       AND COLUMN_NAME IN ('deleted_at', 'deleted_by', 'is_deleted', 'archived_from_active_list')`
+  );
+  const existing = new Set(columns.map((column) => column.COLUMN_NAME));
+  if (!existing.has('deleted_at')) await query('ALTER TABLE orders ADD COLUMN deleted_at TIMESTAMP NULL AFTER updated_at');
+  if (!existing.has('deleted_by')) await query('ALTER TABLE orders ADD COLUMN deleted_by INT NULL AFTER deleted_at');
+  if (!existing.has('is_deleted')) await query('ALTER TABLE orders ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT FALSE AFTER deleted_by');
+  if (!existing.has('archived_from_active_list')) await query('ALTER TABLE orders ADD COLUMN archived_from_active_list BOOLEAN NOT NULL DEFAULT FALSE AFTER is_deleted');
+  hasCheckedOrderArchiveColumns = true;
+}
+
 router.get('/orders', async (req, res, next) => {
   try {
+    await ensureOrderArchiveSupport();
     const params = {};
-    const assigneeFilter = req.user.role === 'production' ? 'WHERE o.assigned_employee_id = :employeeId' : '';
-    if (req.user.role === 'production') params.employeeId = req.user.id;
+    const filters = ['COALESCE(o.archived_from_active_list, FALSE) = FALSE'];
+    if (req.user.role === 'PRODUCTION_EMPLOYEE') {
+      filters.push(`(
+        o.assigned_employee_id = :employeeId
+        OR EXISTS (
+          SELECT 1 FROM assignment_history visible_history
+          WHERE visible_history.order_id = o.id
+            AND (visible_history.new_employee_id = :employeeId OR visible_history.old_employee_id = :employeeId)
+        )
+        OR EXISTS (
+          SELECT 1 FROM order_assignments visible_assignment
+          WHERE visible_assignment.order_id = o.id
+            AND visible_assignment.assigned_to_employee_id = :employeeId
+        )
+      )`);
+    }
+    if (req.user.role === 'PRODUCTION_EMPLOYEE') params.employeeId = req.user.id;
+    const where = `WHERE ${filters.join(' AND ')}`;
 
     const orders = await query(
       `SELECT o.id, o.order_number, o.order_quantity, o.needed_date, o.is_fast, o.production_progress, o.design_notes, o.status_id,
@@ -27,7 +62,7 @@ router.get('/orders', async (req, res, next) => {
        JOIN order_statuses s ON s.id = o.status_id
        LEFT JOIN order_assignments oa ON oa.order_id = o.id AND oa.is_current = TRUE
        LEFT JOIN employees admin ON admin.id = oa.assigned_by_admin_id
-       ${assigneeFilter}
+       ${where}
        ORDER BY o.is_fast DESC, o.needed_date ASC`,
       params
     );
@@ -45,9 +80,27 @@ router.patch('/orders/:id/progress', async (req, res, next) => {
       status_id: z.number().int().positive().optional()
     }).parse(req.body);
 
-    const ownership = await query('SELECT assigned_employee_id, status_id FROM orders WHERE id = :id', { id: req.params.id });
+    const ownership = await query(
+      `SELECT o.assigned_employee_id, o.status_id,
+        EXISTS (
+          SELECT 1 FROM assignment_history visible_history
+          WHERE visible_history.order_id = o.id
+            AND (visible_history.new_employee_id = :employeeId OR visible_history.old_employee_id = :employeeId)
+        ) AS has_history_access,
+        EXISTS (
+          SELECT 1 FROM order_assignments visible_assignment
+          WHERE visible_assignment.order_id = o.id
+            AND visible_assignment.assigned_to_employee_id = :employeeId
+        ) AS has_assignment_access
+       FROM orders o
+       WHERE o.id = :id`,
+      { id: req.params.id, employeeId: req.user.id }
+    );
     if (!ownership.length) return res.status(404).json({ message: 'Order not found.' });
-    if (req.user.role === 'production' && ownership[0].assigned_employee_id !== req.user.id) {
+    if (req.user.role === 'PRODUCTION_EMPLOYEE'
+      && ownership[0].assigned_employee_id !== req.user.id
+      && !Number(ownership[0].has_history_access)
+      && !Number(ownership[0].has_assignment_access)) {
       return res.status(403).json({ message: 'This order is not assigned to you.' });
     }
 
@@ -55,6 +108,7 @@ router.patch('/orders/:id/progress', async (req, res, next) => {
       `UPDATE orders SET production_progress = :progress${body.status_id ? ', status_id = :status_id' : ''} WHERE id = :id`,
       { progress: body.production_progress, status_id: body.status_id, id: req.params.id }
     );
+    let workflowMessage = null;
     if (body.status_id && body.status_id !== ownership[0].status_id) {
       await recordStatusChange({
         orderId: req.params.id,
@@ -63,10 +117,7 @@ router.patch('/orders/:id/progress', async (req, res, next) => {
         changedBy: req.user.id,
         note: 'Updated from production panel'
       });
-      const status = await query('SELECT name FROM order_statuses WHERE id = :id', { id: body.status_id });
-      if (status[0]?.name === 'Completed') {
-        await markOrderCommissionsPayable({ orderId: req.params.id });
-      }
+      workflowMessage = await applyOrderStatusWorkflow({ orderId: req.params.id, statusId: body.status_id });
     }
     await query('INSERT INTO order_activity (order_id, employee_id, action, details) VALUES (:id, :employee, :action, :details)', {
       id: req.params.id,
@@ -75,7 +126,7 @@ router.patch('/orders/:id/progress', async (req, res, next) => {
       details: `${body.production_progress}%`
     });
 
-    res.json({ message: 'Progress updated.' });
+    res.json({ message: workflowMessage || 'Progress updated.' });
   } catch (error) {
     next(error);
   }
@@ -85,9 +136,27 @@ router.post('/orders/:id/tasks/:taskId/toggle', async (req, res, next) => {
   try {
     await ensureOrderTasks(req.params.id);
     const body = z.object({ is_completed: z.boolean() }).parse(req.body);
-    const ownership = await query('SELECT assigned_employee_id FROM orders WHERE id = :id', { id: req.params.id });
+    const ownership = await query(
+      `SELECT o.assigned_employee_id,
+        EXISTS (
+          SELECT 1 FROM assignment_history visible_history
+          WHERE visible_history.order_id = o.id
+            AND (visible_history.new_employee_id = :employeeId OR visible_history.old_employee_id = :employeeId)
+        ) AS has_history_access,
+        EXISTS (
+          SELECT 1 FROM order_assignments visible_assignment
+          WHERE visible_assignment.order_id = o.id
+            AND visible_assignment.assigned_to_employee_id = :employeeId
+        ) AS has_assignment_access
+       FROM orders o
+       WHERE o.id = :id`,
+      { id: req.params.id, employeeId: req.user.id }
+    );
     if (!ownership.length) return res.status(404).json({ message: 'Order not found.' });
-    if (req.user.role === 'production' && ownership[0].assigned_employee_id !== req.user.id) {
+    if (req.user.role === 'PRODUCTION_EMPLOYEE'
+      && ownership[0].assigned_employee_id !== req.user.id
+      && !Number(ownership[0].has_history_access)
+      && !Number(ownership[0].has_assignment_access)) {
       return res.status(403).json({ message: 'This order is not assigned to you.' });
     }
 
@@ -122,15 +191,29 @@ router.post('/orders/:id/tasks/:taskId/toggle', async (req, res, next) => {
 
 router.get('/profile/stats', async (req, res, next) => {
   try {
+    await ensureOrderArchiveSupport();
     const stats = await query(
       `SELECT
-        COALESCE(SUM(o.order_quantity), 0) AS assigned_orders,
-        COALESCE(SUM(CASE WHEN s.name = 'Completed' THEN o.order_quantity ELSE 0 END), 0) AS completed_orders,
-        SUM(o.is_fast = TRUE) AS fast_orders,
+        COUNT(DISTINCT o.id) AS assigned_orders,
+        COUNT(DISTINCT CASE WHEN LOWER(s.name) = 'completed' THEN o.id END) AS completed_orders,
+        COUNT(DISTINCT CASE WHEN o.is_fast = TRUE THEN o.id END) AS fast_orders,
         ROUND(AVG(o.production_progress)) AS average_progress
        FROM orders o
        JOIN order_statuses s ON s.id = o.status_id
-       WHERE o.assigned_employee_id = :employeeId`,
+       WHERE (
+           o.assigned_employee_id = :employeeId
+           OR EXISTS (
+             SELECT 1 FROM assignment_history visible_history
+             WHERE visible_history.order_id = o.id
+               AND (visible_history.new_employee_id = :employeeId OR visible_history.old_employee_id = :employeeId)
+           )
+           OR EXISTS (
+             SELECT 1 FROM order_assignments visible_assignment
+             WHERE visible_assignment.order_id = o.id
+               AND visible_assignment.assigned_to_employee_id = :employeeId
+           )
+         )
+         AND COALESCE(o.archived_from_active_list, FALSE) = FALSE`,
       { employeeId: req.user.id }
     );
     res.json(stats[0]);
