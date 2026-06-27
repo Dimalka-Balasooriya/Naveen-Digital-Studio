@@ -7,11 +7,15 @@ export default {
       },
       colors: {
         studio: {
-          ink: '#111827',
-          panel: '#172033',
+          ink: '#0f172a',
+          panel: '#111827',
+          panel2: '#0f766e',
           line: '#e5e7eb',
           mint: '#14b8a6',
-          coral: '#f97316'
+          coral: '#f97316',
+          gold: '#f59e0b',
+          sky: '#0ea5e9',
+          violet: '#7c3aed'
         }
       }
     }

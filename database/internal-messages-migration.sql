@@ -1,12 +1,17 @@
 CREATE TABLE IF NOT EXISTS messages (
   id INT AUTO_INCREMENT PRIMARY KEY,
+  parent_message_id INT NULL,
   sender_id INT NOT NULL,
   subject VARCHAR(180) NOT NULL,
   body TEXT NOT NULL,
   type ENUM('normal', 'warning') NOT NULL DEFAULT 'normal',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_messages_parent FOREIGN KEY (parent_message_id) REFERENCES messages(id) ON DELETE SET NULL,
   CONSTRAINT fk_messages_sender FOREIGN KEY (sender_id) REFERENCES employees(id)
 );
+
+ALTER TABLE messages
+  ADD COLUMN IF NOT EXISTS parent_message_id INT NULL AFTER id;
 
 CREATE TABLE IF NOT EXISTS message_recipients (
   id INT AUTO_INCREMENT PRIMARY KEY,

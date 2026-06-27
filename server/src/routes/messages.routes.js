@@ -13,14 +13,26 @@ async function ensureMessageTables() {
   await query(`
     CREATE TABLE IF NOT EXISTS messages (
       id INT AUTO_INCREMENT PRIMARY KEY,
+      parent_message_id INT NULL,
       sender_id INT NOT NULL,
       subject VARCHAR(180) NOT NULL,
       body TEXT NOT NULL,
       type ENUM('normal', 'warning') NOT NULL DEFAULT 'normal',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_messages_parent FOREIGN KEY (parent_message_id) REFERENCES messages(id) ON DELETE SET NULL,
       CONSTRAINT fk_messages_sender FOREIGN KEY (sender_id) REFERENCES employees(id)
     )
   `);
+  const parentColumn = await query(
+    `SELECT COUNT(*) AS column_count
+     FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'messages'
+       AND COLUMN_NAME = 'parent_message_id'`
+  );
+  if (!Number(parentColumn[0]?.column_count || 0)) {
+    await query('ALTER TABLE messages ADD COLUMN parent_message_id INT NULL AFTER id');
+  }
   await query(`
     CREATE TABLE IF NOT EXISTS message_recipients (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -40,7 +52,8 @@ const sendSchema = z.object({
   recipient_ids: z.array(z.number().int().positive()).min(1, 'Select at least one recipient.'),
   subject: z.string().min(2, 'Subject is required.').max(180),
   body: z.string().min(2, 'Message body is required.'),
-  type: z.enum(['normal', 'warning']).default('normal')
+  type: z.enum(['normal', 'warning']).default('normal'),
+  reply_to_id: z.number().int().positive().optional().nullable()
 });
 
 function canSendWarning(role) {
@@ -48,9 +61,7 @@ function canSendWarning(role) {
 }
 
 function recipientRoleFilter(userRole) {
-  if (userRole === 'OWNER') return "r.name IN ('OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE')";
-  if (userRole === 'CO_ADMIN') return "r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE')";
-  return "r.name IN ('OWNER', 'CO_ADMIN')";
+  return "r.name IN ('OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE')";
 }
 
 router.get('/recipients', async (req, res, next) => {
@@ -91,7 +102,7 @@ router.get('/inbox', async (req, res, next) => {
   try {
     await ensureMessageTables();
     const rows = await query(
-      `SELECT m.id, m.subject, m.body, m.type, m.created_at,
+      `SELECT m.id, m.parent_message_id, m.sender_id, m.subject, m.body, m.type, m.created_at,
               mr.is_read, mr.read_at,
               sender.name AS sender_name, sender.email AS sender_email, sr.name AS sender_role
        FROM message_recipients mr
@@ -112,7 +123,7 @@ router.get('/sent', async (req, res, next) => {
   try {
     await ensureMessageTables();
     const rows = await query(
-      `SELECT m.id, m.subject, m.body, m.type, m.created_at,
+      `SELECT m.id, m.parent_message_id, m.subject, m.body, m.type, m.created_at,
               COUNT(mr.id) AS recipient_count,
               SUM(CASE WHEN mr.is_read = TRUE THEN 1 ELSE 0 END) AS read_count,
               GROUP_CONCAT(CONCAT(recipient.name, ' (', rr.name, ')') ORDER BY recipient.name SEPARATOR ', ') AS recipients
@@ -158,9 +169,9 @@ router.post('/send', async (req, res, next) => {
     }
 
     const message = await query(
-      `INSERT INTO messages (sender_id, subject, body, type)
-       VALUES (:sender_id, :subject, :body, :type)`,
-      { sender_id: req.user.id, subject: body.subject, body: body.body, type: body.type }
+      `INSERT INTO messages (parent_message_id, sender_id, subject, body, type)
+       VALUES (:parent_message_id, :sender_id, :subject, :body, :type)`,
+      { parent_message_id: body.reply_to_id || null, sender_id: req.user.id, subject: body.subject, body: body.body, type: body.type }
     );
 
     await Promise.all(recipients.map((recipient) => query(

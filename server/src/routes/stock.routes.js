@@ -81,6 +81,59 @@ async function ensureStockTables() {
     )
   `);
 
+  await query(`
+    CREATE TABLE IF NOT EXISTS stock_bills (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      bill_number VARCHAR(40) NOT NULL UNIQUE,
+      stock_item_id INT NOT NULL,
+      branch_id INT NOT NULL,
+      item_name VARCHAR(160) NOT NULL,
+      item_code VARCHAR(40) NOT NULL,
+      branch_name VARCHAR(120) NOT NULL,
+      branch_code VARCHAR(30) NOT NULL,
+      quantity_at_bill INT NOT NULL DEFAULT 0,
+      amount DECIMAL(12,2) NOT NULL,
+      customer_name VARCHAR(160) NULL,
+      note VARCHAR(255) NULL,
+      generated_by INT NOT NULL,
+      generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_stock_bills_item FOREIGN KEY (stock_item_id) REFERENCES stock_items(id),
+      CONSTRAINT fk_stock_bills_branch FOREIGN KEY (branch_id) REFERENCES stock_branches(id),
+      CONSTRAINT fk_stock_bills_generated_by FOREIGN KEY (generated_by) REFERENCES employees(id)
+    )
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS stock_wholesale_bills (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      bill_number VARCHAR(40) NOT NULL UNIQUE,
+      customer_name VARCHAR(160) NULL,
+      note VARCHAR(255) NULL,
+      total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+      generated_by INT NOT NULL,
+      generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_stock_wholesale_bills_generated_by FOREIGN KEY (generated_by) REFERENCES employees(id)
+    )
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS stock_wholesale_bill_items (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      bill_id INT NOT NULL,
+      stock_item_id INT NULL,
+      item_name VARCHAR(160) NOT NULL,
+      item_code VARCHAR(40) NULL,
+      branch_name VARCHAR(120) NULL,
+      branch_code VARCHAR(30) NULL,
+      quantity INT NOT NULL,
+      unit_price DECIMAL(12,2) NOT NULL,
+      line_total DECIMAL(12,2) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT fk_stock_wholesale_items_bill FOREIGN KEY (bill_id) REFERENCES stock_wholesale_bills(id),
+      CONSTRAINT fk_stock_wholesale_items_stock FOREIGN KEY (stock_item_id) REFERENCES stock_items(id)
+    )
+  `);
+
   const columns = await query(
     `SELECT COLUMN_NAME
      FROM INFORMATION_SCHEMA.COLUMNS
@@ -90,6 +143,22 @@ async function ensureStockTables() {
   );
   if (!columns.length) {
     await query('ALTER TABLE stock_movements ADD COLUMN item_id INT NULL AFTER branch_id');
+  }
+
+  const catalogPriceColumn = await query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'stock_catalog_items' AND COLUMN_NAME = 'unit_price'`
+  );
+  if (!catalogPriceColumn.length) {
+    await query('ALTER TABLE stock_catalog_items ADD COLUMN unit_price DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER item_code');
+  }
+
+  const stockPriceColumn = await query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'stock_items' AND COLUMN_NAME = 'unit_price'`
+  );
+  if (!stockPriceColumn.length) {
+    await query('ALTER TABLE stock_items ADD COLUMN unit_price DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER quantity');
   }
 
   await query(`
@@ -110,23 +179,46 @@ async function ensureStockTables() {
 const branchSchema = z.object({
   branch_name: z.string().min(2, 'Branch name is required.'),
   short_code: z.string().min(2, 'Short code is required.'),
-  quantity: z.number().int().min(0, 'Quantity must be zero or more.').optional()
+  quantity: z.coerce.number().int().min(0, 'Quantity must be zero or more.').optional()
 });
 
 const itemSchema = z.object({
   item_name: z.string().min(2, 'Item name is required.'),
   item_code: z.string().min(2, 'Item code is required.'),
-  quantity: z.number().int().min(0, 'Quantity must be zero or more.').optional()
+  quantity: z.coerce.number().int().min(0, 'Quantity must be zero or more.').optional(),
+  unit_price: z.coerce.number().min(0, 'Price must be zero or more.').optional()
 });
 
 const catalogItemSchema = z.object({
   item_name: z.string().min(2, 'Item name is required.'),
-  item_code: z.string().min(2, 'Item code is required.')
+  item_code: z.string().min(2, 'Item code is required.'),
+  unit_price: z.coerce.number().min(0, 'Price must be zero or more.').optional()
+});
+
+const stockBillSchema = z.object({
+  stock_item_id: z.coerce.number().int().positive('Please select a stock item.'),
+  amount: z.coerce.number().positive('Bill amount must be greater than 0.'),
+  customer_name: z.string().optional().nullable(),
+  note: z.string().optional().nullable()
+});
+
+const wholesaleBillSchema = z.object({
+  customer_name: z.string().optional().nullable(),
+  note: z.string().optional().nullable(),
+  items: z.array(z.object({
+    stock_item_id: z.number().int().positive().optional().nullable(),
+    item_name: z.string().min(1, 'Item name is required.'),
+    item_code: z.string().optional().nullable(),
+    branch_name: z.string().optional().nullable(),
+    branch_code: z.string().optional().nullable(),
+    quantity: z.coerce.number().int().positive('Quantity must be greater than 0.'),
+    unit_price: z.coerce.number().min(0, 'Price must be zero or more.')
+  })).min(1, 'Please add at least one bill item.')
 });
 
 const quantitySchema = z.object({
   type: z.enum(['ADD', 'REDUCE']),
-  quantity: z.number().int().positive('Quantity must be greater than 0.'),
+  quantity: z.coerce.number().int().positive('Quantity must be greater than 0.'),
   note: z.string().optional().nullable()
 });
 
@@ -144,16 +236,54 @@ async function stockReportRows(branchId = null) {
             i.item_name,
             i.item_code,
             i.quantity,
+            COALESCE(NULLIF(i.unit_price, 0), c.unit_price, 0) AS unit_price,
             updater.name AS last_updated_by,
             i.updated_at
      FROM stock_branches b
      LEFT JOIN stock_items i ON i.branch_id = b.id AND i.is_active = TRUE
+     LEFT JOIN stock_catalog_items c ON LOWER(c.item_code) = LOWER(i.item_code) AND c.is_active = TRUE
      LEFT JOIN employees updater ON updater.id = i.updated_by
      WHERE b.is_active = TRUE
      ${branchFilter}
      ORDER BY b.branch_name, i.item_name`,
     branchId ? { branch_id: branchId } : {}
   );
+}
+
+async function getStockBill(id) {
+  await ensureStockTables();
+  const rows = await query(
+    `SELECT sb.*, e.name AS generated_by_name, r.name AS generated_by_role
+     FROM stock_bills sb
+     JOIN employees e ON e.id = sb.generated_by
+     JOIN roles r ON r.id = e.role_id
+     WHERE sb.id = :id
+     LIMIT 1`,
+    { id }
+  );
+  return rows[0] || null;
+}
+
+async function getWholesaleBill(id) {
+  await ensureStockTables();
+  const rows = await query(
+    `SELECT wb.*, e.name AS generated_by_name, r.name AS generated_by_role
+     FROM stock_wholesale_bills wb
+     JOIN employees e ON e.id = wb.generated_by
+     JOIN roles r ON r.id = e.role_id
+     WHERE wb.id = :id
+     LIMIT 1`,
+    { id }
+  );
+  if (!rows.length) return null;
+  const items = await query(
+    `SELECT *
+     FROM stock_wholesale_bill_items
+     WHERE bill_id = :id
+     ORDER BY id`,
+    { id }
+  );
+  return { ...rows[0], items };
 }
 
 async function sendStockExcel(res, rows, filename) {
@@ -165,6 +295,7 @@ async function sendStockExcel(res, rows, filename) {
     { header: 'ITEM NAME', key: 'item_name', width: 30 },
     { header: 'ITEM CODE', key: 'item_code', width: 18 },
     { header: 'QUANTITY', key: 'quantity', width: 12 },
+    { header: 'UNIT PRICE', key: 'unit_price', width: 14 },
     { header: 'LAST UPDATED BY', key: 'last_updated_by', width: 24 },
     { header: 'UPDATED AT', key: 'updated_at', width: 24 }
   ];
@@ -173,6 +304,7 @@ async function sendStockExcel(res, rows, filename) {
     item_name: row.item_name || '-',
     item_code: row.item_code || '-',
     quantity: Number(row.quantity || 0),
+    unit_price: Number(row.unit_price || 0),
     updated_at: fmtDate(row.updated_at)
   }));
   sheet.getRow(1).font = { bold: true };
@@ -215,10 +347,11 @@ function sendStockPdf(res, { rows, title, filename, branchName = 'All Branches' 
   const columns = [
     { label: 'Branch', width: 112, value: (row) => row.branch_name },
     { label: 'Code', width: 58, value: (row) => row.branch_code },
-    { label: 'Item', width: 148, value: (row) => row.item_name || '-' },
-    { label: 'Item Code', width: 82, value: (row) => row.item_code || '-' },
+    { label: 'Item', width: 128, value: (row) => row.item_name || '-' },
+    { label: 'Item Code', width: 76, value: (row) => row.item_code || '-' },
     { label: 'Qty', width: 46, value: (row) => Number(row.quantity || 0) },
-    { label: 'Updated', width: 77, value: (row) => fmtDate(row.updated_at) }
+    { label: 'Price', width: 56, value: (row) => `Rs. ${Number(row.unit_price || 0).toLocaleString()}` },
+    { label: 'Updated', width: 47, value: (row) => fmtDate(row.updated_at) }
   ];
   const rowHeight = 28;
   let y = doc.y;
@@ -258,6 +391,142 @@ function sendStockPdf(res, { rows, title, filename, branchName = 'All Branches' 
     doc.fontSize(8).fillColor('#64748b')
       .text('Naveen Digital Studio', 36, 810)
       .text(`Page ${i + 1} of ${pages.count}`, 470, 810, { width: 90, align: 'right' });
+  }
+  doc.end();
+}
+
+function sendStockBillPdf(res, bill) {
+  const doc = new PDFDocument({ margin: 42, size: 'A4' });
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${bill.bill_number}.pdf"`);
+  doc.pipe(res);
+
+  doc.roundedRect(42, 36, 511, 88, 8).fill('#0f172a');
+  doc.fillColor('#5eead4').fontSize(10).text('NAVEEN DIGITAL STUDIO', 62, 54, { characterSpacing: 2 });
+  doc.fillColor('#ffffff').fontSize(24).text('Stock Bill', 62, 76);
+  doc.fillColor('#cbd5e1').fontSize(9).text(`Generated: ${fmtDate(bill.generated_at)}`, 366, 56, { width: 166, align: 'right' });
+  doc.text(`Bill No: ${bill.bill_number}`, 366, 74, { width: 166, align: 'right' });
+
+  doc.y = 154;
+  doc.fillColor('#0f172a').fontSize(12).text('Bill Details', 42, doc.y);
+  doc.moveDown(0.7);
+  const startY = doc.y;
+  doc.roundedRect(42, startY, 511, 166, 8).fillAndStroke('#f8fafc', '#e2e8f0');
+  const details = [
+    ['Customer', bill.customer_name || '-'],
+    ['Branch', `${bill.branch_name} (${bill.branch_code})`],
+    ['Item', bill.item_name],
+    ['Item Code', bill.item_code],
+    ['Available Quantity', String(bill.quantity_at_bill)],
+    ['Generated By', `${bill.generated_by_name} (${bill.generated_by_role})`],
+    ['Note', bill.note || '-']
+  ];
+  let y = startY + 18;
+  details.forEach(([label, value], index) => {
+    const x = index % 2 === 0 ? 62 : 306;
+    if (index > 0 && index % 2 === 0) y += 38;
+    doc.fillColor('#64748b').fontSize(8).text(label, x, y, { width: 210 });
+    doc.fillColor('#0f172a').fontSize(11).text(String(value), x, y + 13, { width: 210, height: 24, ellipsis: true });
+  });
+
+  doc.y = startY + 198;
+  doc.roundedRect(42, doc.y, 511, 70, 8).fillAndStroke('#ecfeff', '#99f6e4');
+  doc.fillColor('#0f766e').fontSize(10).text('Bill Amount', 62, doc.y + 16);
+  doc.fillColor('#0f172a').fontSize(24).text(`Rs. ${Number(bill.amount || 0).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 62, doc.y + 32);
+
+  doc.fontSize(8).fillColor('#64748b')
+    .text('This bill does not reduce stock quantity automatically.', 42, 760, { align: 'center', width: 511 })
+    .text('Naveen Digital Studio', 42, 794, { align: 'center', width: 511 });
+  doc.end();
+}
+
+function sendWholesaleBillPdf(res, bill) {
+  const doc = new PDFDocument({ margin: 38, size: 'A4', bufferPages: true });
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${bill.bill_number}.pdf"`);
+  doc.pipe(res);
+
+  doc.roundedRect(38, 32, 519, 88, 8).fill('#0f172a');
+  doc.fillColor('#5eead4').fontSize(10).text('NAVEEN DIGITAL STUDIO', 58, 50, { characterSpacing: 2 });
+  doc.fillColor('#ffffff').fontSize(23).text('Wholesale Stock Bill', 58, 72);
+  doc.fillColor('#cbd5e1').fontSize(9).text(`Generated: ${fmtDate(bill.generated_at)}`, 360, 52, { width: 176, align: 'right' });
+  doc.text(`Bill No: ${bill.bill_number}`, 360, 70, { width: 176, align: 'right' });
+
+  doc.y = 145;
+  doc.roundedRect(38, doc.y, 519, 58, 8).fillAndStroke('#f8fafc', '#e2e8f0');
+  doc.fillColor('#64748b').fontSize(8).text('Customer', 58, doc.y + 13);
+  doc.fillColor('#0f172a').fontSize(11).text(bill.customer_name || '-', 58, doc.y + 27, { width: 210 });
+  doc.fillColor('#64748b').fontSize(8).text('Generated By', 320, doc.y + 13, { width: 210, align: 'right' });
+  doc.fillColor('#0f172a').fontSize(11).text(`${bill.generated_by_name} (${bill.generated_by_role})`, 320, doc.y + 27, { width: 210, align: 'right' });
+
+  let y = 230;
+  const columns = [
+    { label: 'Item', width: 172 },
+    { label: 'Code', width: 70 },
+    { label: 'Branch', width: 96 },
+    { label: 'Qty', width: 42 },
+    { label: 'Price', width: 66 },
+    { label: 'Total', width: 73 }
+  ];
+  const drawHeader = () => {
+    doc.rect(38, y, 28 + 0, 0);
+    doc.rect(38, y, 519, 28).fill('#e2e8f0');
+    let x = 38;
+    columns.forEach((column) => {
+      doc.fillColor('#0f172a').fontSize(8).text(column.label, x + 5, y + 10, { width: column.width - 10 });
+      x += column.width;
+    });
+    y += 28;
+  };
+  drawHeader();
+
+  bill.items.forEach((item, index) => {
+    if (y > 760) {
+      doc.addPage();
+      y = 44;
+      drawHeader();
+    }
+    doc.rect(38, y, 519, 32).fill(index % 2 ? '#ffffff' : '#f8fafc').stroke('#e5e7eb');
+    const values = [
+      item.item_name,
+      item.item_code || '-',
+      item.branch_name || '-',
+      item.quantity,
+      `Rs. ${Number(item.unit_price || 0).toLocaleString()}`,
+      `Rs. ${Number(item.line_total || 0).toLocaleString()}`
+    ];
+    let x = 38;
+    columns.forEach((column, columnIndex) => {
+      doc.fillColor('#111827').fontSize(8).text(String(values[columnIndex]), x + 5, y + 9, {
+        width: column.width - 10,
+        height: 18,
+        ellipsis: true,
+        align: columnIndex >= 3 ? 'right' : 'left'
+      });
+      x += column.width;
+    });
+    y += 32;
+  });
+
+  if (y > 704) {
+    doc.addPage();
+    y = 58;
+  }
+  doc.roundedRect(344, y + 24, 213, 58, 8).fillAndStroke('#ecfeff', '#99f6e4');
+  doc.fillColor('#0f766e').fontSize(9).text('Grand Total', 362, y + 39);
+  doc.fillColor('#0f172a').fontSize(20).text(`Rs. ${Number(bill.total_amount || 0).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 362, y + 54, { width: 176, align: 'right' });
+  if (bill.note) {
+    doc.fillColor('#64748b').fontSize(9).text(`Note: ${bill.note}`, 38, y + 30, { width: 280 });
+  }
+
+  const pages = doc.bufferedPageRange();
+  for (let i = 0; i < pages.count; i += 1) {
+    doc.switchToPage(i);
+    doc.fontSize(8).fillColor('#64748b')
+      .text('Stock is not reduced automatically by this wholesale bill.', 38, 794, { width: 360 })
+      .text(`Page ${i + 1} of ${pages.count}`, 478, 794, { width: 80, align: 'right' });
   }
   doc.end();
 }
@@ -309,6 +578,191 @@ router.get('/catalog/items', requireProductionOrAdmin, async (req, res, next) =>
   }
 });
 
+router.get('/bill-items', requireAdminOrCoAdmin, async (req, res, next) => {
+  try {
+    await ensureStockTables();
+    const search = String(req.query.search || '').trim();
+    if (!search) return res.json([]);
+    const rows = await query(
+      `SELECT i.id,
+              i.item_name,
+              i.item_code,
+              i.quantity,
+              COALESCE(NULLIF(i.unit_price, 0), c.unit_price, 0) AS unit_price,
+              i.branch_id,
+              b.branch_name,
+              b.short_code AS branch_code
+       FROM stock_items i
+       JOIN stock_branches b ON b.id = i.branch_id
+       LEFT JOIN stock_catalog_items c ON LOWER(c.item_code) = LOWER(i.item_code) AND c.is_active = TRUE
+       WHERE i.is_active = TRUE
+         AND b.is_active = TRUE
+         AND (i.item_name LIKE :search OR i.item_code LIKE :search)
+       ORDER BY i.item_name, b.branch_name
+       LIMIT 20`,
+      { search: `%${search}%` }
+    );
+    res.json(rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/wholesale-bills', requireAdminOrCoAdmin, async (req, res, next) => {
+  try {
+    await ensureStockTables();
+    const rows = await query(
+      `SELECT wb.id,
+              wb.bill_number,
+              wb.customer_name,
+              wb.note,
+              wb.total_amount,
+              wb.generated_at,
+              e.name AS generated_by_name,
+              r.name AS generated_by_role,
+              COUNT(wbi.id) AS item_count
+       FROM stock_wholesale_bills wb
+       JOIN employees e ON e.id = wb.generated_by
+       JOIN roles r ON r.id = e.role_id
+       LEFT JOIN stock_wholesale_bill_items wbi ON wbi.bill_id = wb.id
+       GROUP BY wb.id
+       ORDER BY wb.generated_at DESC, wb.id DESC
+       LIMIT 100`
+    );
+    res.json(rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/wholesale-bills', requireAdminOrCoAdmin, async (req, res, next) => {
+  try {
+    await ensureStockTables();
+    const body = wholesaleBillSchema.parse({
+      ...req.body,
+      items: (req.body.items || []).map((item) => ({
+        ...item,
+        stock_item_id: item.stock_item_id ? Number(item.stock_item_id) : null,
+        quantity: Number(item.quantity),
+        unit_price: Number(item.unit_price)
+      }))
+    });
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const countRows = await query('SELECT COUNT(*) AS count FROM stock_wholesale_bills WHERE DATE(generated_at) = CURRENT_DATE');
+    const billNumber = `WS-${today}-${String(Number(countRows[0]?.count || 0) + 1).padStart(3, '0')}`;
+    const totalAmount = body.items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unit_price), 0);
+    const result = await query(
+      `INSERT INTO stock_wholesale_bills (bill_number, customer_name, note, total_amount, generated_by)
+       VALUES (:bill_number, :customer_name, :note, :total_amount, :generated_by)`,
+      {
+        bill_number: billNumber,
+        customer_name: body.customer_name || null,
+        note: body.note || null,
+        total_amount: totalAmount,
+        generated_by: req.user.id
+      }
+    );
+    await Promise.all(body.items.map((item) => query(
+      `INSERT INTO stock_wholesale_bill_items (
+         bill_id, stock_item_id, item_name, item_code, branch_name, branch_code,
+         quantity, unit_price, line_total
+       )
+       VALUES (
+         :bill_id, :stock_item_id, :item_name, :item_code, :branch_name, :branch_code,
+         :quantity, :unit_price, :line_total
+       )`,
+      {
+        bill_id: result.insertId,
+        stock_item_id: item.stock_item_id || null,
+        item_name: item.item_name,
+        item_code: item.item_code || null,
+        branch_name: item.branch_name || null,
+        branch_code: item.branch_code || null,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        line_total: Number(item.quantity) * Number(item.unit_price)
+      }
+    )));
+    const bill = await getWholesaleBill(result.insertId);
+    res.status(201).json({ ...bill, message: 'Wholesale stock bill generated successfully.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/wholesale-bills/:id/pdf', requireAdminOrCoAdmin, async (req, res, next) => {
+  try {
+    const bill = await getWholesaleBill(req.params.id);
+    if (!bill) return res.status(404).json({ message: 'Wholesale stock bill not found.' });
+    sendWholesaleBillPdf(res, bill);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/bills', requireAdminOrCoAdmin, async (req, res, next) => {
+  try {
+    await ensureStockTables();
+    const body = stockBillSchema.parse({
+      ...req.body,
+      stock_item_id: Number(req.body.stock_item_id),
+      amount: Number(req.body.amount)
+    });
+    const itemRows = await query(
+      `SELECT i.*, b.branch_name, b.short_code AS branch_code
+       FROM stock_items i
+       JOIN stock_branches b ON b.id = i.branch_id
+       WHERE i.id = :id AND i.is_active = TRUE AND b.is_active = TRUE
+       LIMIT 1`,
+      { id: body.stock_item_id }
+    );
+    if (!itemRows.length) return res.status(404).json({ message: 'Stock item not found.' });
+
+    const item = itemRows[0];
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const countRows = await query('SELECT COUNT(*) AS count FROM stock_bills WHERE DATE(generated_at) = CURRENT_DATE');
+    const billNumber = `STK-${today}-${String(Number(countRows[0]?.count || 0) + 1).padStart(3, '0')}`;
+    const result = await query(
+      `INSERT INTO stock_bills (
+         bill_number, stock_item_id, branch_id, item_name, item_code, branch_name,
+         branch_code, quantity_at_bill, amount, customer_name, note, generated_by
+       )
+       VALUES (
+         :bill_number, :stock_item_id, :branch_id, :item_name, :item_code, :branch_name,
+         :branch_code, :quantity_at_bill, :amount, :customer_name, :note, :generated_by
+       )`,
+      {
+        bill_number: billNumber,
+        stock_item_id: item.id,
+        branch_id: item.branch_id,
+        item_name: item.item_name,
+        item_code: item.item_code,
+        branch_name: item.branch_name,
+        branch_code: item.branch_code,
+        quantity_at_bill: item.quantity,
+        amount: body.amount,
+        customer_name: body.customer_name || null,
+        note: body.note || null,
+        generated_by: req.user.id
+      }
+    );
+    const bill = await getStockBill(result.insertId);
+    res.status(201).json({ ...bill, message: 'Stock bill generated successfully.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/bills/:id/pdf', requireAdminOrCoAdmin, async (req, res, next) => {
+  try {
+    const bill = await getStockBill(req.params.id);
+    if (!bill) return res.status(404).json({ message: 'Stock bill not found.' });
+    sendStockBillPdf(res, bill);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post('/catalog/items', requireOwner, async (req, res, next) => {
   try {
     await ensureStockTables();
@@ -323,17 +777,39 @@ router.post('/catalog/items', requireOwner, async (req, res, next) => {
     if (existing.length) {
       await query(
         `UPDATE stock_catalog_items
-         SET item_name = :item_name, item_code = :item_code, is_active = TRUE, updated_by = :user_id
+         SET item_name = :item_name,
+             item_code = :item_code,
+             unit_price = :unit_price,
+             is_active = TRUE,
+             updated_by = :user_id
          WHERE id = :id`,
-        { id: existing[0].id, item_name: body.item_name, item_code: body.item_code.toUpperCase(), user_id: req.user.id }
+        { id: existing[0].id, item_name: body.item_name, item_code: body.item_code.toUpperCase(), unit_price: Number(body.unit_price || 0), user_id: req.user.id }
+      );
+      await query(
+        `UPDATE stock_items
+         SET item_name = :item_name,
+             unit_price = :unit_price,
+             updated_by = :user_id
+         WHERE LOWER(item_code) = LOWER(:item_code)
+           AND (unit_price = 0 OR unit_price IS NULL)`,
+        { item_name: body.item_name, item_code: body.item_code, unit_price: Number(body.unit_price || 0), user_id: req.user.id }
       );
       const rows = await query('SELECT * FROM stock_catalog_items WHERE id = :id', { id: existing[0].id });
       return res.status(201).json({ ...rows[0], message: 'Item added successfully.' });
     }
     const result = await query(
-      `INSERT INTO stock_catalog_items (item_name, item_code, created_by, updated_by)
-       VALUES (:item_name, :item_code, :user_id, :user_id)`,
-      { item_name: body.item_name, item_code: body.item_code.toUpperCase(), user_id: req.user.id }
+      `INSERT INTO stock_catalog_items (item_name, item_code, unit_price, created_by, updated_by)
+       VALUES (:item_name, :item_code, :unit_price, :user_id, :user_id)`,
+      { item_name: body.item_name, item_code: body.item_code.toUpperCase(), unit_price: Number(body.unit_price || 0), user_id: req.user.id }
+    );
+    await query(
+      `UPDATE stock_items
+       SET item_name = :item_name,
+           unit_price = :unit_price,
+           updated_by = :user_id
+       WHERE LOWER(item_code) = LOWER(:item_code)
+         AND (unit_price = 0 OR unit_price IS NULL)`,
+      { item_name: body.item_name, item_code: body.item_code, unit_price: Number(body.unit_price || 0), user_id: req.user.id }
     );
     const rows = await query('SELECT * FROM stock_catalog_items WHERE id = :id', { id: result.insertId });
     res.status(201).json({ ...rows[0], message: 'Item added successfully.' });
@@ -352,17 +828,35 @@ router.put('/catalog/items/:id', requireOwner, async (req, res, next) => {
       id: req.params.id,
       item_name: body.item_name || null,
       item_code: body.item_code ? body.item_code.toUpperCase() : null,
+      unit_price: body.unit_price ?? null,
       user_id: req.user.id
     };
     await query(
       `UPDATE stock_catalog_items
        SET item_name = COALESCE(:item_name, item_name),
            item_code = COALESCE(:item_code, item_code),
+           unit_price = COALESCE(:unit_price, unit_price),
            updated_by = :user_id
        WHERE id = :id`,
       payload
     );
     const rows = await query('SELECT * FROM stock_catalog_items WHERE id = :id', { id: req.params.id });
+    if (rows.length && body.unit_price !== undefined) {
+      await query(
+        `UPDATE stock_items
+         SET unit_price = :unit_price,
+             item_name = :item_name,
+             updated_by = :user_id
+         WHERE LOWER(item_code) = LOWER(:item_code)
+           AND (unit_price = 0 OR unit_price IS NULL)`,
+        {
+          item_name: rows[0].item_name,
+          item_code: rows[0].item_code,
+          unit_price: Number(rows[0].unit_price || 0),
+          user_id: req.user.id
+        }
+      );
+    }
     res.json({ ...rows[0], message: 'Item updated successfully.' });
   } catch (error) {
     next(error);
@@ -405,9 +899,24 @@ router.get('/branches/:id/items', requireProductionOrAdmin, async (req, res, nex
   try {
     await ensureStockTables();
     const rows = await query(
-      `SELECT i.*, b.branch_name, b.short_code, creator.name AS created_by_name, updater.name AS updated_by_name
+      `SELECT i.id,
+              i.branch_id,
+              i.item_name,
+              i.item_code,
+              i.quantity,
+              COALESCE(NULLIF(i.unit_price, 0), c.unit_price, 0) AS unit_price,
+              i.is_active,
+              i.created_by,
+              i.updated_by,
+              i.created_at,
+              i.updated_at,
+              b.branch_name,
+              b.short_code,
+              creator.name AS created_by_name,
+              updater.name AS updated_by_name
        FROM stock_items i
        JOIN stock_branches b ON b.id = i.branch_id
+       LEFT JOIN stock_catalog_items c ON LOWER(c.item_code) = LOWER(i.item_code) AND c.is_active = TRUE
        LEFT JOIN employees creator ON creator.id = i.created_by
        LEFT JOIN employees updater ON updater.id = i.updated_by
        WHERE i.branch_id = :branch_id AND i.is_active = TRUE AND b.is_active = TRUE
@@ -535,19 +1044,20 @@ router.post('/branches/:id/items', requireAdminOrCoAdmin, async (req, res, next)
       return res.status(409).json({ message: 'This item code already exists in this branch. Use + to add quantity.' });
     }
     await query(
-      `INSERT INTO stock_catalog_items (item_name, item_code, created_by, updated_by)
-       VALUES (:item_name, :item_code, :user_id, :user_id)
-       ON DUPLICATE KEY UPDATE item_name = VALUES(item_name), is_active = TRUE, updated_by = VALUES(updated_by)`,
-      { item_name: body.item_name, item_code: body.item_code.toUpperCase(), user_id: req.user.id }
+      `INSERT INTO stock_catalog_items (item_name, item_code, unit_price, created_by, updated_by)
+       VALUES (:item_name, :item_code, :unit_price, :user_id, :user_id)
+       ON DUPLICATE KEY UPDATE item_name = VALUES(item_name), unit_price = VALUES(unit_price), is_active = TRUE, updated_by = VALUES(updated_by)`,
+      { item_name: body.item_name, item_code: body.item_code.toUpperCase(), unit_price: Number(body.unit_price || 0), user_id: req.user.id }
     );
     const result = await query(
-      `INSERT INTO stock_items (branch_id, item_name, item_code, quantity, created_by, updated_by)
-       VALUES (:branch_id, :item_name, :item_code, :quantity, :user_id, :user_id)`,
+      `INSERT INTO stock_items (branch_id, item_name, item_code, quantity, unit_price, created_by, updated_by)
+       VALUES (:branch_id, :item_name, :item_code, :quantity, :unit_price, :user_id, :user_id)`,
       {
         branch_id: req.params.id,
         item_name: body.item_name,
         item_code: body.item_code.toUpperCase(),
         quantity,
+        unit_price: Number(body.unit_price || 0),
         user_id: req.user.id
       }
     );
@@ -582,6 +1092,7 @@ router.put('/items/:id', requireOwner, async (req, res, next) => {
        SET item_name = COALESCE(:item_name, item_name),
            item_code = COALESCE(:item_code, item_code),
            quantity = :quantity,
+           unit_price = COALESCE(:unit_price, unit_price),
            updated_by = :user_id
        WHERE id = :id`,
       {
@@ -589,6 +1100,7 @@ router.put('/items/:id', requireOwner, async (req, res, next) => {
         item_name: body.item_name || null,
         item_code: body.item_code ? body.item_code.toUpperCase() : null,
         quantity: nextQuantity,
+        unit_price: body.unit_price ?? null,
         user_id: req.user.id
       }
     );

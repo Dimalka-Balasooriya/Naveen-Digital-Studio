@@ -5,6 +5,7 @@ import { authenticate, requireRole } from '../middleware/auth.js';
 import { createOrderNumber, ensureOrderTasks } from '../utils/orders.js';
 import {
   applyOrderStatusWorkflow,
+  cancelOrderCommissions,
   ensureStatusWorkflowSupport,
   isCompleteStatusName,
   recordOrderAssignment,
@@ -999,6 +1000,7 @@ router.delete('/:id', authenticate, requireRole('admin'), async (req, res, next)
        WHERE id = ?`,
       [req.user.id, req.params.id]
     );
+    await cancelOrderCommissions({ orderId: req.params.id, reason: 'Order deleted', connection });
     await connection.execute(
       'INSERT INTO order_activity (order_id, employee_id, action, details) VALUES (?, ?, ?, ?)',
       [req.params.id, req.user.id, 'Archived order', 'Removed from active order list']

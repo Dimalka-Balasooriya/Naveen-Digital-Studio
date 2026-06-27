@@ -120,6 +120,74 @@ router.get('/summary/me', requireRole('admin', 'production'), async (req, res, n
   }
 });
 
+router.get('/overview', requireRole('admin', 'production'), async (req, res, next) => {
+  try {
+    await ensureStatusWorkflowSupport();
+    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const monthStart = `${month}-01`;
+    const employeeId = req.query.employee_id ? Number(req.query.employee_id) : null;
+
+    const employeeFilter = employeeId ? 'AND e.id = :employeeId' : '';
+    const roleFilter = req.query.role ? 'AND r.name = :role' : '';
+    const statusFilter = req.query.status ? 'AND s.name = :status' : '';
+    const params = { monthStart, employeeId, role: req.query.role || null, status: req.query.status || null };
+
+    const summary = await query(
+      `SELECT
+        e.id AS employee_id,
+        e.name AS employee_name,
+        r.name AS employee_role,
+        COUNT(DISTINCT c.order_id) AS orders_count,
+        COALESCE(SUM(CASE WHEN DATE(c.assignment_started_at) = CURDATE() THEN c.commission_amount ELSE 0 END), 0) AS daily_commission,
+        COALESCE(SUM(CASE WHEN YEARWEEK(c.assignment_started_at, 1) = YEARWEEK(CURDATE(), 1) THEN c.commission_amount ELSE 0 END), 0) AS weekly_commission,
+        COALESCE(SUM(CASE WHEN DATE(c.assignment_started_at) BETWEEN :monthStart AND LAST_DAY(:monthStart) THEN c.commission_amount ELSE 0 END), 0) AS monthly_commission,
+        COALESCE(SUM(c.commission_amount), 0) AS total_commission,
+        COALESCE(SUM(CASE WHEN c.is_payable = TRUE THEN c.commission_amount ELSE 0 END), 0) AS payable_commission,
+        COALESCE(SUM(c.paid_amount), 0) AS paid_commission,
+        COALESCE(SUM(CASE WHEN c.cancelled_at IS NOT NULL THEN c.paid_amount + c.commission_amount ELSE 0 END), 0) AS cancelled_commission,
+        MAX(c.updated_at) AS last_commission_updated_at
+       FROM employees e
+       JOIN roles r ON r.id = e.role_id
+       LEFT JOIN commissions c ON c.employee_id = e.id
+       LEFT JOIN orders o ON o.id = c.order_id
+       LEFT JOIN order_statuses s ON s.id = o.status_id
+       WHERE r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE')
+         AND e.deleted_at IS NULL
+         ${employeeFilter}
+         ${roleFilter}
+         ${statusFilter}
+       GROUP BY e.id, r.name
+       ORDER BY monthly_commission DESC, total_commission DESC, e.name`,
+      params
+    );
+
+    const records = await query(
+      `SELECT c.*, e.name AS employee_name, r.name AS employee_role,
+        o.order_number, s.name AS status_name
+       FROM commissions c
+       JOIN employees e ON e.id = c.employee_id
+       JOIN roles r ON r.id = e.role_id
+       JOIN orders o ON o.id = c.order_id
+       JOIN order_statuses s ON s.id = o.status_id
+       WHERE r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE')
+         AND e.deleted_at IS NULL
+         ${employeeFilter}
+         ${roleFilter}
+         ${statusFilter}
+       ORDER BY c.assignment_started_at DESC, c.id DESC`,
+      params
+    );
+
+    res.json({
+      summary,
+      records,
+      top_earner: summary[0] || null
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.patch('/:id', requireOwner, async (req, res, next) => {
   try {
     const body = z.object({
@@ -181,6 +249,30 @@ router.patch('/:id/paid', requireRole('admin'), async (req, res, next) => {
       { id: req.params.id, notes: body.notes || null }
     );
     res.json({ message: 'Commission payment mark removed.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch('/:id/cancel', requireRole('admin'), async (req, res, next) => {
+  try {
+    await ensureStatusWorkflowSupport();
+    const body = z.object({
+      reason: z.string().optional().nullable()
+    }).parse(req.body);
+
+    const result = await query(
+      `UPDATE commissions
+       SET commission_amount = 0,
+           is_payable = FALSE,
+           is_active = FALSE,
+           cancelled_reason = :reason,
+           cancelled_at = COALESCE(cancelled_at, CURRENT_TIMESTAMP)
+       WHERE id = :id`,
+      { id: req.params.id, reason: body.reason || 'Commission cancelled manually' }
+    );
+    if (!result.affectedRows) return res.status(404).json({ message: 'Commission not found.' });
+    res.json({ message: 'Commission cancelled.' });
   } catch (error) {
     next(error);
   }

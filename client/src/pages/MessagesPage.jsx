@@ -44,7 +44,8 @@ export default function MessagesPage() {
     recipient_ids: [],
     subject: '',
     body: '',
-    type: 'normal'
+    type: 'normal',
+    reply_to_id: null
   });
 
   const unreadCount = useMemo(
@@ -97,7 +98,7 @@ export default function MessagesPage() {
       };
       const { data } = await api.post('/messages/send', payload);
       setNotice(data.message || 'Message sent successfully.');
-      setForm({ recipient_ids: [], subject: '', body: '', type: 'normal' });
+      setForm({ recipient_ids: [], subject: '', body: '', type: 'normal', reply_to_id: null });
       setActiveTab('sent');
       await loadMessages();
       window.dispatchEvent(new Event('nds-messages-updated'));
@@ -120,6 +121,18 @@ export default function MessagesPage() {
     } catch {
       // The message is still readable locally even if the read receipt update fails.
     }
+  }
+
+  function replyToMessage(message) {
+    setSelectedMessage(null);
+    setActiveTab('compose');
+    setForm({
+      recipient_ids: message.sender_id ? [Number(message.sender_id)] : [],
+      subject: message.subject?.toLowerCase().startsWith('re:') ? message.subject : `Re: ${message.subject}`,
+      body: `\n\n--- Original message ---\n${message.body}`,
+      type: 'normal',
+      reply_to_id: message.id
+    });
   }
 
   return (
@@ -317,11 +330,14 @@ export default function MessagesPage() {
           <div className={`w-full max-w-2xl rounded-md bg-white shadow-xl ${selectedMessage.type === 'warning' ? 'border-2 border-rose-300' : ''}`}>
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <div>
-                <div className="mb-2"><MessageBadge type={selectedMessage.type} /></div>
+              <div className="mb-2"><MessageBadge type={selectedMessage.type} /></div>
                 <h2 className="text-xl font-semibold text-slate-950">{selectedMessage.subject}</h2>
                 <p className="text-sm text-slate-500">From {selectedMessage.sender_name} ({selectedMessage.sender_role}) - {formatDate(selectedMessage.created_at)}</p>
               </div>
-              <button onClick={() => setSelectedMessage(null)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">Close</button>
+              <div className="flex items-center gap-2">
+                <button onClick={() => replyToMessage(selectedMessage)} className="rounded-md bg-teal-600 px-3 py-2 text-sm font-semibold text-white hover:bg-teal-700">Reply</button>
+                <button onClick={() => setSelectedMessage(null)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100">Close</button>
+              </div>
             </div>
             <div className="space-y-4 p-5">
               {selectedMessage.type === 'warning' ? (

@@ -162,11 +162,6 @@ export async function applyOrderStatusWorkflow({ orderId, statusId, connection =
 
   const cancellationReason = returnedCancelReason(statusName);
   if (cancellationReason) {
-    if (cancellationReason === 'Order returned') {
-      await deductReturnedOrderCommissions({ orderId, connection });
-      return 'Order returned. Rs. 20 was deducted from every related commission.';
-    }
-
     await cancelOrderCommissions({ orderId, reason: cancellationReason, connection });
     return `${cancellationReason}. Related commissions were removed.`;
   }
