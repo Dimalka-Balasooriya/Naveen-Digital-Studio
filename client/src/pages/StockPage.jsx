@@ -364,6 +364,12 @@ export default function StockPage() {
     }
   }
 
+  function formatBillItemLabel(item) {
+    const code = item.item_code ? ` (${item.item_code})` : '';
+    const branch = item.branch_name ? ` - ${item.branch_name}` : ' - Item Master';
+    return `${item.item_name}${code}${branch}`;
+  }
+
   function selectBillItem(item) {
     setBillLine({
       stock_item_id: String(item.id).startsWith('catalog-') ? '' : item.id,
@@ -375,7 +381,7 @@ export default function StockPage() {
       unit_price: Number(item.unit_price || 0),
       selected: true
     });
-    setBillSearch(`${item.item_name} (${item.item_code}) - ${item.branch_name}`);
+    setBillSearch(formatBillItemLabel(item));
     setBillItems([]);
     setGeneratedBill(null);
   }
@@ -432,7 +438,7 @@ export default function StockPage() {
       const exactMatch = matches.find((item) => (
         String(item.item_name || '').toLowerCase() === term
         || String(item.item_code || '').toLowerCase() === term
-        || `${item.item_name} (${item.item_code}) - ${item.branch_name}`.toLowerCase() === term
+        || formatBillItemLabel(item).toLowerCase() === term
       ));
       if (exactMatch) {
         nextLine = lineFromBillItem(exactMatch);
@@ -602,7 +608,7 @@ export default function StockPage() {
                       >
                         <span>
                           <span className="block font-semibold text-slate-950">{item.item_name}</span>
-                          <span className="block text-xs text-slate-500">{item.branch_name} - {item.item_code}</span>
+                          <span className="block text-xs text-slate-500">{item.branch_name || 'Item Master'} - {item.item_code}</span>
                         </span>
                         <span className="rounded-full bg-teal-50 px-3 py-1 text-sm font-semibold text-teal-700">Rs. {Number(item.unit_price || 0).toLocaleString()}</span>
                       </button>

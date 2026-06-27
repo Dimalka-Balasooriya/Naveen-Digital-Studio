@@ -591,14 +591,34 @@ router.get('/bill-items', requireAdminOrCoAdmin, async (req, res, next) => {
               COALESCE(NULLIF(i.unit_price, 0), c.unit_price, 0) AS unit_price,
               i.branch_id,
               b.branch_name,
-              b.short_code AS branch_code
+              b.short_code AS branch_code,
+              'stock' AS source_type
        FROM stock_items i
        JOIN stock_branches b ON b.id = i.branch_id
        LEFT JOIN stock_catalog_items c ON LOWER(c.item_code) = LOWER(i.item_code) AND c.is_active = TRUE
        WHERE i.is_active = TRUE
          AND b.is_active = TRUE
          AND (i.item_name LIKE :search OR i.item_code LIKE :search)
-       ORDER BY i.item_name, b.branch_name
+       UNION ALL
+       SELECT CONCAT('catalog-', c.id) AS id,
+              c.item_name,
+              c.item_code,
+              0 AS quantity,
+              c.unit_price,
+              NULL AS branch_id,
+              NULL AS branch_name,
+              NULL AS branch_code,
+              'catalog' AS source_type
+       FROM stock_catalog_items c
+       WHERE c.is_active = TRUE
+         AND (c.item_name LIKE :search OR c.item_code LIKE :search)
+         AND NOT EXISTS (
+           SELECT 1
+           FROM stock_items i
+           WHERE i.is_active = TRUE
+             AND LOWER(i.item_code) = LOWER(c.item_code)
+         )
+       ORDER BY item_name, branch_name
        LIMIT 20`,
       { search: `%${search}%` }
     );
