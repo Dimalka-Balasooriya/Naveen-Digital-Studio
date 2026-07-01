@@ -178,10 +178,12 @@ router.get('/overview', requireRole('admin', 'production'), async (req, res, nex
       params
     );
 
+    const topEarner = summary.find((row) => Number(row.monthly_commission || 0) > 0) || null;
+
     res.json({
       summary,
       records,
-      top_earner: summary[0] || null
+      top_earner: topEarner
     });
   } catch (error) {
     next(error);

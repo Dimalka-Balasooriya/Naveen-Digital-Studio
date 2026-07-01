@@ -185,7 +185,12 @@ export default function ReportsPage() {
                 </div>
               </div>
             </section>
-          ) : null}
+          ) : (
+            <section className="rounded-md border border-slate-200 bg-white p-5">
+              <p className="text-sm font-semibold text-slate-700">No highest commission yet.</p>
+              <p className="mt-1 text-sm text-slate-500">A congratulations card will appear after someone earns a monthly commission.</p>
+            </section>
+          )}
 
           <section className="rounded-md border border-slate-200 bg-white">
             <div className="border-b border-slate-200 p-5">
