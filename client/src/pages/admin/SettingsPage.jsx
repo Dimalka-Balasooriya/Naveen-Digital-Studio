@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { Check, Edit3, Plus, Trash2, X } from 'lucide-react';
 import { api } from '../../services/api';
 import { inputClass } from '../../components/FormFields';
+import { getStatusStyle, getStatusTone, isHexColor, statusColorMap, statusHexPalette, titleCase } from '../../utils/statusDisplay';
+
+const statusColorOptions = [...statusHexPalette, ...Object.keys(statusColorMap)];
 
 const sections = [
   {
@@ -48,6 +51,21 @@ function cleanPayload(raw = {}) {
   );
   if ('sort_order' in payload) payload.sort_order = Number(payload.sort_order || 0);
   return payload;
+}
+
+function StatusColorMeta({ color, sortOrder }) {
+  const tone = getStatusTone(color);
+  const style = getStatusStyle(color);
+  const isHex = isHexColor(color);
+  return (
+    <span className="mt-1 inline-flex flex-wrap items-center gap-2 text-xs text-slate-500">
+      <span className={`h-3 w-3 rounded-full ${isHex ? '' : tone.dot}`} style={isHex ? { backgroundColor: color } : undefined} />
+      <span className={`rounded-full px-2 py-0.5 font-semibold ring-1 ${tone.chip}`} style={style}>
+        {isHex ? String(color).toUpperCase() : titleCase(color || 'slate')}
+      </span>
+      <span>Sort {sortOrder ?? 0}</span>
+    </span>
+  );
 }
 
 export default function SettingsPage() {
@@ -135,6 +153,7 @@ export default function SettingsPage() {
               <input
                 key={field.name}
                 type={field.type || 'text'}
+                list={section.key === 'statuses' && field.name === 'color' ? 'status-color-options' : undefined}
                 className={inputClass}
                 placeholder={field.label}
                 required={field.required}
@@ -143,6 +162,11 @@ export default function SettingsPage() {
                 onChange={(event) => setForms({ ...forms, [section.key]: { ...(forms[section.key] || {}), [field.name]: event.target.value } })}
               />
             ))}
+            {section.key === 'statuses' ? (
+              <datalist id="status-color-options">
+                {statusColorOptions.map((color) => <option key={color} value={color} />)}
+              </datalist>
+            ) : null}
             <button disabled={Boolean(submitting)} onClick={() => addItem(section)} className="flex items-center justify-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">
               <Plus size={16} />
               {submitting === `add-${section.key}` ? 'Saving...' : 'Add'}
@@ -161,6 +185,7 @@ export default function SettingsPage() {
                         <input
                           key={field.name}
                           type={field.type || 'text'}
+                          list={section.key === 'statuses' && field.name === 'color' ? 'status-color-options' : undefined}
                           className={inputClass}
                           value={editForm[field.name] ?? ''}
                           onChange={(event) => setEditing({ ...editing, [editKey]: { ...editForm, [field.name]: event.target.value } })}
@@ -174,12 +199,12 @@ export default function SettingsPage() {
                   ) : (
                     <>
                       <div>
-                        <p className="font-medium text-slate-900">{item.name}</p>
+                        <p className="font-medium text-slate-900">{section.key === 'statuses' ? titleCase(item.name) : item.name}</p>
                         <p className="text-xs text-slate-500">
                           {section.key === 'pages' && (item.whatsapp_number || 'No WhatsApp number')}
                           {section.key === 'products' && 'Available for orders'}
                           {section.key === 'couriers' && (item.phone || 'Available for tracking')}
-                          {section.key === 'statuses' && `${item.color || 'slate'} - Sort ${item.sort_order ?? 0}`}
+                          {section.key === 'statuses' && <StatusColorMeta color={item.color} sortOrder={item.sort_order} />}
                         </p>
                       </div>
                       <div className="flex gap-1">

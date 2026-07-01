@@ -3,6 +3,7 @@ import { BellRing, CheckCircle2, Clock, Search, Trophy, Zap } from 'lucide-react
 import { api } from '../../services/api';
 import StatCard from '../../components/StatCard';
 import StatusBadge from '../../components/StatusBadge';
+import { titleCase } from '../../utils/statusDisplay';
 
 export default function ProductionDashboard() {
   const [orders, setOrders] = useState([]);
@@ -195,7 +196,7 @@ export default function ProductionDashboard() {
                 </div>
                 <div className="w-full lg:w-72">
                   <select className="mb-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm" value={order.status_id} onChange={(event) => updateStatus(order, event.target.value)}>
-                    {statuses.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}
+                    {statuses.map((status) => <option key={status.id} value={status.id}>{titleCase(status.name)}</option>)}
                   </select>
                   <div className="flex items-center justify-between text-sm">
                     <span className="font-medium text-slate-700">Progress</span>

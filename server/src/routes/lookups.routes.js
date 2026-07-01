@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../config/db.js';
 import { authenticate, requireAdminOrCoAdmin } from '../middleware/auth.js';
+import { seedDefaultOrderStatuses, titleCaseWords } from '../utils/tracking.js';
 
 const router = Router();
 
@@ -22,6 +23,48 @@ const schemas = {
 };
 
 let hasCheckedFacebookPageColumns = false;
+
+const statusColorPalette = [
+  '#64748B',
+  '#0EA5E9',
+  '#10B981',
+  '#8B5CF6',
+  '#06B6D4',
+  '#F59E0B',
+  '#84CC16',
+  '#2563EB',
+  '#14B8A6',
+  '#F97316',
+  '#A855F7',
+  '#6366F1',
+  '#EC4899',
+  '#D946EF',
+  '#F43F5E',
+  '#EAB308',
+  '#22C55E',
+  '#0D9488',
+  '#0891B2',
+  '#3B82F6',
+  '#7C3AED',
+  '#D97706',
+  '#EA580C',
+  '#DB2777',
+  '#16A34A',
+  '#DC2626'
+];
+
+function prepareLookupBody(type, body, { isUpdate = false } = {}) {
+  if (type !== 'statuses') return body;
+  const sortOrder = Number(body.sort_order || 0);
+  const prepared = {
+    ...body,
+    name: body.name ? titleCaseWords(body.name) : body.name
+  };
+  if (!prepared.color && !isUpdate) {
+    prepared.color = statusColorPalette[Math.max(sortOrder - 1, 0) % statusColorPalette.length];
+  }
+  return prepared;
+}
 
 async function ensureFacebookPageColumns() {
   if (hasCheckedFacebookPageColumns) return;
@@ -56,6 +99,7 @@ router.get('/:type', authenticate, async (req, res, next) => {
     const table = lookupTables[req.params.type];
     if (!table) return res.status(404).json({ message: 'Lookup type not found.' });
     if (req.params.type === 'couriers') await ensureCourierServicesTable();
+    if (req.params.type === 'statuses') await seedDefaultOrderStatuses();
 
     const orderBy = ['pages', 'products', 'couriers'].includes(req.params.type) ? 'name' : 'sort_order, name';
     const includeInactive = req.params.type === 'statuses' && req.query.include_inactive === 'true';
@@ -75,7 +119,7 @@ router.post('/:type', authenticate, requireAdminOrCoAdmin, async (req, res, next
     if (type === 'pages') await ensureFacebookPageColumns();
     if (type === 'couriers') await ensureCourierServicesTable();
 
-    const body = schemas[type].parse(req.body);
+    const body = prepareLookupBody(type, schemas[type].parse(req.body));
     if (['pages', 'products', 'statuses', 'couriers'].includes(type)) {
       const existing = await query(`SELECT id, is_active FROM ${table} WHERE LOWER(name) = LOWER(:name) LIMIT 1`, { name: body.name });
       if (existing.length && existing[0].is_active) {
@@ -109,7 +153,7 @@ router.put('/:type/:id', authenticate, requireAdminOrCoAdmin, async (req, res, n
     if (type === 'pages') await ensureFacebookPageColumns();
     if (type === 'couriers') await ensureCourierServicesTable();
 
-    const body = schemas[type].partial().parse(req.body);
+    const body = prepareLookupBody(type, schemas[type].partial().parse(req.body), { isUpdate: true });
     const keys = Object.keys(body);
     if (!keys.length) return res.status(400).json({ message: 'No fields supplied.' });
 

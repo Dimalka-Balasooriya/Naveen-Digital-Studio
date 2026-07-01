@@ -3,6 +3,7 @@ import { CheckCircle2, Download, Eye, FileSpreadsheet, Loader2, Printer, Trophy,
 import { api } from '../../services/api';
 import { inputClass } from '../../components/FormFields';
 import { useAuth } from '../../context/AuthContext';
+import { titleCase } from '../../utils/statusDisplay';
 import { normalizeRole } from '../../utils/roles';
 
 function money(value) {
@@ -156,7 +157,7 @@ export default function ReportsPage() {
           </select>
           <select className={inputClass} value={status} onChange={(event) => setStatus(event.target.value)}>
             <option value="">All statuses</option>
-            {statuses.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
+            {statuses.map((item) => <option key={item.id} value={item.name}>{titleCase(item.name)}</option>)}
           </select>
           <select className={inputClass} value={advancedType} onChange={(event) => { setAdvancedType(event.target.value); setPreviewType('advanced'); }}>
             {advancedReports.map((report) => <option key={report.type} value={report.type}>{report.title}</option>)}

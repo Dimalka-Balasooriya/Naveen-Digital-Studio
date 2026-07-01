@@ -6,6 +6,7 @@ import StatusBadge from '../../components/StatusBadge';
 import { Field, inputClass } from '../../components/FormFields';
 import { useAuth } from '../../context/AuthContext';
 import { normalizeRole } from '../../utils/roles';
+import { titleCase } from '../../utils/statusDisplay';
 
 const emptyForm = {
   customer_name: '',
@@ -499,7 +500,7 @@ export default function OrdersPage() {
         >
           <option value="">All Orders</option>
           {lookups.filterStatuses.map((status) => (
-            <option key={status.id} value={status.name}>{status.name}</option>
+            <option key={status.id} value={status.name}>{titleCase(status.name)}</option>
           ))}
         </select>
         <button onClick={openCreateOrder} className="flex items-center justify-center gap-2 rounded-md bg-studio-mint px-4 py-2 text-sm font-semibold text-white">
@@ -521,7 +522,7 @@ export default function OrdersPage() {
                     <p className="text-sm font-semibold text-slate-700">Order History</p>
                     {customer.orders.map((order, index) => (
                       <div key={order.id} className="rounded border border-slate-100 px-3 py-2 text-sm text-slate-700">
-                        {index + 1}. {order.product_name} | Qty: {order.order_quantity || 1} | FB Page: {order.facebook_page_name || 'None'} | Courier: {order.courier_service_name || 'Not selected'} | Tracking: {order.tracking_number || 'Not added'} | Status: {order.status_name}
+                        {index + 1}. {order.product_name} | Qty: {order.order_quantity || 1} | FB Page: {order.facebook_page_name || 'None'} | Courier: {order.courier_service_name || 'Not selected'} | Tracking: {order.tracking_number || 'Not added'} | Status: {titleCase(order.status_name)}
                         {order.archived_from_active_list ? <span className="ml-2 rounded bg-rose-50 px-2 py-0.5 text-xs font-semibold text-rose-700">Removed from active list</span> : null}
                       </div>
                     ))}
@@ -602,7 +603,7 @@ export default function OrdersPage() {
           <Field label="Facebook page"><select className={inputClass} value={form.facebook_page_id} onChange={(event) => setForm({ ...form, facebook_page_id: event.target.value })}><option value="">None</option>{lookups.pages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
           <Field label="Courier service"><select className={inputClass} value={form.courier_service_id} onChange={(event) => setForm({ ...form, courier_service_id: event.target.value })}><option value="">Not selected</option>{lookups.couriers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
           <Field label="Tracking number"><input className={inputClass} value={form.tracking_number} onChange={(event) => setForm({ ...form, tracking_number: event.target.value })} placeholder="Add anytime" /></Field>
-          <Field label="Status"><select className={inputClass} value={form.status_id} onChange={(event) => setForm({ ...form, status_id: event.target.value })} required><option value="">Select</option>{lookups.statuses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+          <Field label="Status"><select className={inputClass} value={form.status_id} onChange={(event) => setForm({ ...form, status_id: event.target.value })} required><option value="">Select</option>{lookups.statuses.map((item) => <option key={item.id} value={item.id}>{titleCase(item.name)}</option>)}</select></Field>
           <Field label="Assigned employee"><select className={inputClass} value={form.assigned_employee_id} onChange={(event) => setForm({ ...form, assigned_employee_id: event.target.value })}><option value="">Unassigned</option>{productionEmployees.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
           <Field label="CO_ADMIN for completion commission"><select className={inputClass} value={form.co_admin_id} onChange={(event) => setForm({ ...form, co_admin_id: event.target.value })}><option value="">Order creator / logged-in CO_ADMIN</option>{coAdmins.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
           <Field label="Order Quantity"><input type="number" min="1" required className={inputClass} value={form.order_quantity} onChange={(event) => setForm({ ...form, order_quantity: event.target.value })} /></Field>

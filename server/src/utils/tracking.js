@@ -90,32 +90,44 @@ export async function ensureStatusWorkflowSupport({ connection = null } = {}) {
   await seedDefaultOrderStatuses({ connection });
 }
 
+export function titleCaseWords(value = '') {
+  return String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+}
+
 const defaultOrderStatuses = [
-  'New',
-  'editing',
-  'editing done',
-  'editing sent',
-  'correction',
-  'correction done',
-  'address received',
-  'order confirmed',
-  'billing done',
-  'save',
-  'save done',
-  'on printing',
-  'printing done',
-  'issued for production',
-  'collected by night branch',
-  'collected by warehouse',
-  'collecting by kb',
-  'production ongoing',
-  'issued for transport lorry/wheel',
-  'order processing',
-  'order reschedule 01',
-  'order reschedule 02',
-  'order reschedule 03',
-  'complete',
-  'returned'
+  { name: 'New', color: '#0EA5E9' },
+  { name: 'Editing', color: '#10B981' },
+  { name: 'Editing Done', color: '#8B5CF6' },
+  { name: 'Editing Sent', color: '#06B6D4' },
+  { name: 'Correction', color: '#F59E0B' },
+  { name: 'Correction Done', color: '#84CC16' },
+  { name: 'Address Received', color: '#2563EB' },
+  { name: 'Order Confirmed', color: '#14B8A6' },
+  { name: 'Billing Done', color: '#F97316' },
+  { name: 'Save', color: '#A855F7' },
+  { name: 'Save Done', color: '#6366F1' },
+  { name: 'On Printing', color: '#EC4899' },
+  { name: 'Printing Done', color: '#D946EF' },
+  { name: 'Issued For Production', color: '#F43F5E' },
+  { name: 'Collected By Night Branch', color: '#EAB308' },
+  { name: 'Collected By Warehouse', color: '#22C55E' },
+  { name: 'Collecting By Kb', color: '#0D9488' },
+  { name: 'Production Ongoing', color: '#0891B2' },
+  { name: 'Issued For Transport Lorry/Wheel', color: '#3B82F6' },
+  { name: 'Order Processing', color: '#7C3AED' },
+  { name: 'Order Reschedule 01', color: '#D97706' },
+  { name: 'Order Reschedule 02', color: '#EA580C' },
+  { name: 'Order Reschedule 03', color: '#DB2777' },
+  { name: 'Complete', color: '#16A34A' },
+  { name: 'Returned', color: '#DC2626' }
+];
+
+const fallbackStatusColors = [
+  '#64748B',
+  ...defaultOrderStatuses.map((status) => status.color)
 ];
 
 export function isCompleteStatusName(statusName) {
@@ -130,16 +142,53 @@ export function returnedCancelReason(statusName) {
 }
 
 export async function seedDefaultOrderStatuses({ connection = null } = {}) {
-  for (const [index, name] of defaultOrderStatuses.entries()) {
+  for (const [index, status] of defaultOrderStatuses.entries()) {
     await run(
       connection,
       `INSERT INTO order_statuses (name, color, sort_order, is_final, is_active)
-       SELECT ?, 'slate', ?, ?, TRUE
+       SELECT ?, ?, ?, ?, TRUE
        WHERE NOT EXISTS (
          SELECT 1 FROM order_statuses existing_status WHERE LOWER(existing_status.name) = LOWER(?)
        )`,
-      [name, index + 1, isCompleteStatusName(name) || ['returned'].includes(name), name]
+      [status.name, status.color, index + 1, isCompleteStatusName(status.name) || ['returned'].includes(status.name.toLowerCase()), status.name]
     );
+
+    await run(
+      connection,
+      `UPDATE order_statuses
+       SET name = ?,
+           color = ?,
+           sort_order = ?,
+           is_final = ?,
+           is_active = TRUE
+       WHERE LOWER(name) = LOWER(?)`,
+      [status.name, status.color, index + 1, isCompleteStatusName(status.name) || status.name.toLowerCase() === 'returned', status.name]
+    );
+  }
+
+  const rows = await run(
+    connection,
+    `SELECT id, name, color
+     FROM order_statuses
+     WHERE is_active = TRUE
+     ORDER BY sort_order, id`
+  );
+
+  for (const [index, status] of rows.entries()) {
+    const formattedName = titleCaseWords(status.name);
+    const normalizedColor = String(status.color || '').trim().toLowerCase();
+    const supportedColor = fallbackStatusColors.map((color) => color.toLowerCase()).includes(normalizedColor);
+    const nextColor = supportedColor && normalizedColor !== 'slate'
+      ? normalizedColor
+      : fallbackStatusColors[index % fallbackStatusColors.length];
+
+    if (formattedName !== status.name || nextColor !== normalizedColor) {
+      await run(
+        connection,
+        'UPDATE order_statuses SET name = ?, color = ? WHERE id = ?',
+        [formattedName, nextColor, status.id]
+      );
+    }
   }
 }
 
