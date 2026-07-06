@@ -26,6 +26,9 @@ const emptyForm = {
   co_admin_commission_amount: 0,
   needed_date: '',
   is_fast: false,
+  is_future_order: false,
+  future_needed_date: '',
+  future_note: '',
   order_quantity: 1,
   total_amount: 0,
   advance_amount: 0,
@@ -47,6 +50,8 @@ export default function OrdersPage() {
   const [lookups, setLookups] = useState({ products: [], pages: [], couriers: [], statuses: [], filterStatuses: [], employees: [] });
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [assignedOnly, setAssignedOnly] = useState(false);
   const [assignedOrdersCount, setAssignedOrdersCount] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
@@ -68,9 +73,27 @@ export default function OrdersPage() {
   const [completionAmounts, setCompletionAmounts] = useState({});
   const [savingCompletion, setSavingCompletion] = useState(false);
   const [payingCommissionId, setPayingCommissionId] = useState(null);
+  const [orderPrintSize, setOrderPrintSize] = useState('A4');
 
   const productionEmployees = useMemo(() => lookups.employees.filter((employee) => employee.role === 'PRODUCTION_EMPLOYEE' && employee.is_active), [lookups.employees]);
   const coAdmins = useMemo(() => lookups.employees.filter((employee) => employee.role === 'CO_ADMIN' && employee.is_active), [lookups.employees]);
+
+  function orderFilterParams(overrides = {}) {
+    const nextSearch = overrides.search ?? search;
+    const nextStatus = overrides.statusFilter ?? statusFilter;
+    const nextAssignedOnly = overrides.assignedOnly ?? assignedOnly;
+    const nextFromDate = overrides.fromDate ?? fromDate;
+    const nextToDate = overrides.toDate ?? toDate;
+
+    return {
+      search: nextSearch || undefined,
+      status: nextStatus || undefined,
+      assigned_only: nextAssignedOnly ? 'true' : undefined,
+      from_date: nextFromDate || undefined,
+      to_date: nextToDate || undefined,
+      _: Date.now()
+    };
+  }
 
   async function loadLookups() {
     const cacheBust = Date.now();
@@ -89,7 +112,7 @@ export default function OrdersPage() {
     setError('');
     try {
       const [ordersRes, assignedCountRes] = await Promise.all([
-        api.get('/orders', { params: { search, status: statusFilter || undefined, assigned_only: assignedOnly ? 'true' : undefined, _: Date.now() } }),
+        api.get('/orders', { params: orderFilterParams() }),
         isCoAdmin ? api.get('/orders', { params: { assigned_only: 'true', _: Date.now() } }) : Promise.resolve({ data: [] }),
         loadLookups()
       ]);
@@ -124,6 +147,9 @@ export default function OrdersPage() {
       production_commission_amount: Number(form.production_commission_amount || form.commission_amount || 0),
       co_admin_id: form.co_admin_id ? Number(form.co_admin_id) : null,
       co_admin_commission_amount: Number(form.co_admin_commission_amount || 0),
+      is_future_order: Boolean(form.is_future_order),
+      future_needed_date: form.is_future_order ? (form.future_needed_date || form.needed_date || null) : null,
+      future_note: form.is_future_order ? (form.future_note?.trim() || null) : null,
       order_quantity: Number(form.order_quantity || 1),
       total_amount: Number(form.total_amount),
       advance_amount: Number(form.advance_amount)
@@ -194,6 +220,9 @@ export default function OrdersPage() {
       co_admin_commission_amount: order.current_co_admin_commission_amount || 0,
       needed_date: order.needed_date?.slice(0, 10) || '',
       is_fast: Boolean(order.is_fast),
+      is_future_order: Boolean(order.is_future_order),
+      future_needed_date: order.future_needed_date?.slice(0, 10) || '',
+      future_note: order.future_note || '',
       order_quantity: order.order_quantity || order.quantity || 1,
       total_amount: order.total_amount || 0,
       advance_amount: order.advance_amount || 0,
@@ -412,12 +441,158 @@ export default function OrdersPage() {
     URL.revokeObjectURL(url);
   }
 
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
+  function selectedLookupName(collection, id, fallback = '-') {
+    if (!id) return fallback;
+    return collection.find((item) => Number(item.id) === Number(id))?.name || fallback;
+  }
+
+  function orderPrintPageSize(size) {
+    const normalized = String(size || 'A4').toUpperCase();
+    if (normalized === 'A5') return 'A5 portrait';
+    if (normalized === '80MM') return '80mm auto';
+    if (normalized === '4X6') return '4in 6in';
+    return 'A4 portrait';
+  }
+
+  function orderPrintHtml() {
+    const productName = form.product_name?.trim() || selectedLookupName(lookups.products, form.product_id, 'Custom product');
+    const facebookPageName = selectedLookupName(lookups.pages, form.facebook_page_id, 'None');
+    const courierName = selectedLookupName(lookups.couriers, form.courier_service_id, 'Not selected');
+    const statusName = titleCase(selectedLookupName(lookups.statuses, form.status_id, 'Not selected'));
+    const assignedEmployee = selectedLookupName(productionEmployees, form.assigned_employee_id, 'Unassigned');
+    const coAdminName = selectedLookupName(coAdmins, form.co_admin_id, 'Order creator / logged-in CO_ADMIN');
+    const printSize = orderPrintPageSize(orderPrintSize);
+    const isReceipt = orderPrintSize === '80MM';
+
+    return `<!doctype html>
+      <html>
+        <head>
+          <title>Order Print ${escapeHtml(editingOrder?.order_number || 'Draft')}</title>
+          <style>
+            @page { size: ${printSize}; margin: ${isReceipt ? '6mm' : '12mm'}; }
+            * { box-sizing: border-box; }
+            body {
+              margin: 0;
+              font-family: Arial, sans-serif;
+              color: #0f172a;
+              background: #fff;
+              font-size: ${isReceipt ? '11px' : '13px'};
+            }
+            .sheet { width: 100%; }
+            .header {
+              display: flex;
+              justify-content: space-between;
+              gap: 14px;
+              border-bottom: 2px solid #0f766e;
+              padding-bottom: ${isReceipt ? '8px' : '14px'};
+              margin-bottom: ${isReceipt ? '10px' : '16px'};
+            }
+            .brand { display: flex; align-items: center; gap: 10px; }
+            .logo { width: ${isReceipt ? '38px' : '56px'}; height: ${isReceipt ? '38px' : '56px'}; object-fit: contain; border-radius: 999px; border: 1px solid #dbeafe; }
+            .eyebrow { margin: 0; font-size: ${isReceipt ? '8px' : '10px'}; letter-spacing: 0.22em; color: #0f766e; font-weight: 700; text-transform: uppercase; }
+            h1 { margin: 3px 0 0; font-size: ${isReceipt ? '15px' : '24px'}; }
+            h2 { margin: 0 0 8px; font-size: ${isReceipt ? '12px' : '15px'}; }
+            .meta { text-align: right; font-size: ${isReceipt ? '9px' : '12px'}; color: #475569; }
+            .grid { display: grid; grid-template-columns: ${isReceipt ? '1fr' : '1fr 1fr'}; gap: 10px; }
+            .box { border: 1px solid #cbd5e1; border-radius: 8px; padding: ${isReceipt ? '8px' : '12px'}; break-inside: avoid; }
+            .row { display: grid; grid-template-columns: 42% 58%; gap: 8px; padding: 5px 0; border-bottom: 1px solid #e2e8f0; }
+            .row:last-child { border-bottom: 0; }
+            .label { color: #64748b; font-weight: 700; }
+            .value { color: #0f172a; font-weight: 600; overflow-wrap: anywhere; }
+            .notes { white-space: pre-wrap; overflow-wrap: anywhere; }
+            .totals { margin-top: 12px; border: 1px solid #99f6e4; background: #f0fdfa; border-radius: 8px; padding: ${isReceipt ? '8px' : '12px'}; }
+            .footer { margin-top: 14px; padding-top: 8px; border-top: 1px solid #cbd5e1; color: #64748b; font-size: ${isReceipt ? '9px' : '11px'}; text-align: center; }
+            @media print { .no-print { display: none !important; } }
+          </style>
+        </head>
+        <body>
+          <main class="sheet">
+            <section class="header">
+              <div class="brand">
+                <img class="logo" src="/naveen-digital-studio-logo.jpeg" />
+                <div>
+                  <p class="eyebrow">Naveen Digital Studio</p>
+                  <h1>Order Details</h1>
+                </div>
+              </div>
+              <div class="meta">
+                <div><strong>${escapeHtml(editingOrder?.order_number || 'Draft Order')}</strong></div>
+                <div>${escapeHtml(new Date().toLocaleString())}</div>
+                <div>Print Size: ${escapeHtml(orderPrintSize)}</div>
+              </div>
+            </section>
+
+            <section class="grid">
+              <div class="box">
+                <h2>Customer</h2>
+                <div class="row"><div class="label">Name</div><div class="value">${escapeHtml(form.customer_name || '-')}</div></div>
+                <div class="row"><div class="label">Phone</div><div class="value">${escapeHtml(form.customer_phone || '-')}</div></div>
+                <div class="row"><div class="label">Address</div><div class="value">${escapeHtml(form.customer_address || '-')}</div></div>
+                <div class="row"><div class="label">Needed</div><div class="value">${escapeHtml(form.needed_date || '-')}</div></div>
+                <div class="row"><div class="label">Future</div><div class="value">${form.is_future_order ? 'Yes' : 'No'}</div></div>
+                ${form.is_future_order ? `<div class="row"><div class="label">Future Date</div><div class="value">${escapeHtml(form.future_needed_date || form.needed_date || '-')}</div></div>` : ''}
+              </div>
+
+              <div class="box">
+                <h2>Order</h2>
+                <div class="row"><div class="label">Product</div><div class="value">${escapeHtml(productName)}</div></div>
+                <div class="row"><div class="label">Quantity</div><div class="value">${escapeHtml(form.order_quantity || 1)}</div></div>
+                <div class="row"><div class="label">Status</div><div class="value">${escapeHtml(statusName)}</div></div>
+                <div class="row"><div class="label">Fast</div><div class="value">${form.is_fast ? 'Yes' : 'No'}</div></div>
+              </div>
+
+              <div class="box">
+                <h2>Assignment</h2>
+                <div class="row"><div class="label">Employee</div><div class="value">${escapeHtml(assignedEmployee)}</div></div>
+                <div class="row"><div class="label">CO_ADMIN</div><div class="value">${escapeHtml(coAdminName)}</div></div>
+                <div class="row"><div class="label">Facebook</div><div class="value">${escapeHtml(facebookPageName)}</div></div>
+                <div class="row"><div class="label">Courier</div><div class="value">${escapeHtml(courierName)}</div></div>
+                <div class="row"><div class="label">Tracking</div><div class="value">${escapeHtml(form.tracking_number || '-')}</div></div>
+              </div>
+
+              <div class="box">
+                <h2>Amount</h2>
+                <div class="row"><div class="label">Total</div><div class="value">Rs. ${Number(form.total_amount || 0).toLocaleString()}</div></div>
+                <div class="row"><div class="label">Advance</div><div class="value">Rs. ${Number(form.advance_amount || 0).toLocaleString()}</div></div>
+                <div class="row"><div class="label">Balance</div><div class="value">Rs. ${Math.max(Number(form.total_amount || 0) - Number(form.advance_amount || 0), 0).toLocaleString()}</div></div>
+              </div>
+            </section>
+
+            ${form.design_notes ? `<section class="box" style="margin-top:10px;"><h2>Design Notes</h2><div class="notes">${escapeHtml(form.design_notes)}</div></section>` : ''}
+            ${form.is_future_order && form.future_note ? `<section class="box" style="margin-top:10px;"><h2>Future Order Note</h2><div class="notes">${escapeHtml(form.future_note)}</div></section>` : ''}
+            <div class="footer">Copyright ${new Date().getFullYear()} Naveen Digital Studio. All rights reserved.</div>
+          </main>
+        </body>
+      </html>`;
+  }
+
+  function printOrderDetails() {
+    const popup = window.open('', '_blank');
+    if (!popup) {
+      setError('Print popup was blocked. Please allow popups and try again.');
+      return;
+    }
+    popup.document.write(orderPrintHtml());
+    popup.document.close();
+    popup.focus();
+    popup.print();
+  }
+
   async function runSearch(event) {
     event.preventDefault();
     setError('');
     try {
       const [ordersRes, customersRes] = await Promise.all([
-        api.get('/orders', { params: { search, status: statusFilter || undefined, assigned_only: assignedOnly ? 'true' : undefined } }),
+        api.get('/orders', { params: orderFilterParams() }),
         search ? api.get('/customers/search', { params: { q: search } }) : Promise.resolve({ data: [] })
       ]);
       setOrders(Array.isArray(ordersRes.data) ? ordersRes.data : []);
@@ -434,7 +609,7 @@ export default function OrdersPage() {
     setError('');
     try {
       const { data } = await api.get('/orders', {
-        params: { search, status: value || undefined, assigned_only: assignedOnly ? 'true' : undefined, _: Date.now() }
+        params: orderFilterParams({ statusFilter: value })
       });
       setOrders(Array.isArray(data) ? data : []);
     } catch (requestError) {
@@ -449,13 +624,32 @@ export default function OrdersPage() {
     setError('');
     try {
       const { data } = await api.get('/orders', {
-        params: { search, status: statusFilter || undefined, assigned_only: onlyMine ? 'true' : undefined, _: Date.now() }
+        params: orderFilterParams({ assignedOnly: onlyMine })
       });
       setOrders(Array.isArray(data) ? data : []);
     } catch (requestError) {
       setOrders([]);
       setError(requestError.response?.data?.message || requestError.message || 'Orders could not be filtered.');
     }
+  }
+
+  async function applyDateFilter(nextFromDate, nextToDate) {
+    setError('');
+    try {
+      const { data } = await api.get('/orders', {
+        params: orderFilterParams({ fromDate: nextFromDate, toDate: nextToDate })
+      });
+      setOrders(Array.isArray(data) ? data : []);
+    } catch (requestError) {
+      setOrders([]);
+      setError(requestError.response?.data?.message || requestError.message || 'Orders could not be filtered by date.');
+    }
+  }
+
+  function clearDateFilter() {
+    setFromDate('');
+    setToDate('');
+    applyDateFilter('', '');
   }
 
   return (
@@ -493,6 +687,39 @@ export default function OrdersPage() {
             <option value="assigned">My Assigned Orders</option>
           </select>
         ) : null}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            From
+            <input
+              type="date"
+              className={`${inputClass} mt-1 sm:w-40`}
+              value={fromDate}
+              onChange={(event) => {
+                const value = event.target.value;
+                setFromDate(value);
+                applyDateFilter(value, toDate);
+              }}
+            />
+          </label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            To
+            <input
+              type="date"
+              className={`${inputClass} mt-1 sm:w-40`}
+              value={toDate}
+              onChange={(event) => {
+                const value = event.target.value;
+                setToDate(value);
+                applyDateFilter(fromDate, value);
+              }}
+            />
+          </label>
+          {fromDate || toDate ? (
+            <button type="button" onClick={clearDateFilter} className="rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600">
+              Clear
+            </button>
+          ) : null}
+        </div>
         <select
           className={`${inputClass} sm:w-56`}
           value={statusFilter}
@@ -550,10 +777,11 @@ export default function OrdersPage() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {orders.map((order) => (
-                <tr key={order.id} onClick={() => showDetails(order)} className={`${order.is_fast ? 'bg-orange-50/70' : 'bg-white'} cursor-pointer hover:bg-slate-50`}>
+                <tr key={order.id} onClick={() => showDetails(order)} className={`${order.is_fast ? 'bg-orange-50/70' : order.is_future_order ? 'bg-sky-50/70' : 'bg-white'} cursor-pointer hover:bg-slate-50`}>
                   <td className="px-4 py-3 font-semibold text-slate-950">
                     {order.order_number}
                     {order.is_fast ? <span className="ml-2 rounded bg-orange-100 px-2 py-0.5 text-xs text-orange-700">Fast</span> : null}
+                    {order.is_future_order ? <span className="ml-2 rounded bg-sky-100 px-2 py-0.5 text-xs text-sky-700">Future</span> : null}
                   </td>
                   <td className="px-4 py-3">
                     <p className="font-medium text-slate-900">{order.customer_name}</p>
@@ -610,10 +838,59 @@ export default function OrdersPage() {
           <Field label="Total amount"><input type="number" min="0" className={inputClass} value={form.total_amount} onChange={(event) => setForm({ ...form, total_amount: event.target.value })} /></Field>
           <Field label="Advance amount"><input type="number" min="0" className={inputClass} value={form.advance_amount} onChange={(event) => setForm({ ...form, advance_amount: event.target.value })} /></Field>
           <label className="flex items-center gap-2 pt-7 text-sm font-medium text-slate-700"><input type="checkbox" checked={form.is_fast} onChange={(event) => setForm({ ...form, is_fast: event.target.checked })} /> Fast order</label>
+          <label className="flex items-center gap-2 pt-7 text-sm font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={form.is_future_order}
+              onChange={(event) => setForm({
+                ...form,
+                is_future_order: event.target.checked,
+                future_needed_date: event.target.checked ? (form.future_needed_date || form.needed_date) : '',
+                future_note: event.target.checked ? form.future_note : ''
+              })}
+            />
+            Future order
+          </label>
+          {form.is_future_order ? (
+            <>
+              <Field label="Future needed date">
+                <input type="date" className={inputClass} value={form.future_needed_date} onChange={(event) => setForm({ ...form, future_needed_date: event.target.value })} />
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Future order note">
+                  <textarea className={inputClass} rows="2" value={form.future_note} onChange={(event) => setForm({ ...form, future_note: event.target.value })} placeholder="Add future order note" />
+                </Field>
+              </div>
+            </>
+          ) : null}
           <div className="sm:col-span-2"><Field label="Design notes"><textarea className={inputClass} rows="3" value={form.design_notes} onChange={(event) => setForm({ ...form, design_notes: event.target.value })} /></Field></div>
-          <div className="sm:col-span-2 flex justify-end gap-2 border-t border-slate-200 pt-4">
-            <button type="button" onClick={() => setModalOpen(false)} className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold">Cancel</button>
-            <button disabled={savingOrder} className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{savingOrder ? 'Saving...' : 'Save order'}</button>
+          <div className="sm:col-span-2 flex flex-col gap-3 border-t border-slate-200 pt-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label className="text-sm font-semibold text-slate-700" htmlFor="order-print-size">Print size</label>
+              <select
+                id="order-print-size"
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm"
+                value={orderPrintSize}
+                onChange={(event) => setOrderPrintSize(event.target.value)}
+              >
+                <option value="A4">A4</option>
+                <option value="A5">A5</option>
+                <option value="80MM">80mm Receipt</option>
+                <option value="4X6">4 x 6 Label</option>
+              </select>
+              <button
+                type="button"
+                onClick={printOrderDetails}
+                className="flex items-center justify-center gap-2 rounded-md border border-teal-300 bg-teal-50 px-4 py-2 text-sm font-semibold text-teal-800 hover:bg-teal-100"
+              >
+                <Printer size={16} />
+                Print Details
+              </button>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setModalOpen(false)} className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold">Cancel</button>
+              <button disabled={savingOrder} className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{savingOrder ? 'Saving...' : 'Save order'}</button>
+            </div>
           </div>
         </form>
       </Modal>
@@ -845,6 +1122,14 @@ export default function OrdersPage() {
             <div><p className="text-slate-500">Amounts</p><p className="font-semibold">Total Rs. {Number(detailOrder.total_amount || 0).toLocaleString()}</p><p>Advance Rs. {Number(detailOrder.advance_amount || 0).toLocaleString()}</p></div>
             <div><p className="text-slate-500">Status</p><p className="font-semibold">{detailOrder.status_name}</p></div>
             <div><p className="text-slate-500">Assigned employee</p><p className="font-semibold">{detailOrder.assigned_employee_name || 'Unassigned'}</p></div>
+            <div>
+              <p className="text-slate-500">Future order</p>
+              <p className="font-semibold">{detailOrder.is_future_order ? 'Yes' : 'No'}</p>
+              {detailOrder.is_future_order ? <p>Future date: {(detailOrder.future_needed_date || detailOrder.needed_date)?.slice(0, 10)}</p> : null}
+            </div>
+            {detailOrder.is_future_order && detailOrder.future_note ? (
+              <div><p className="text-slate-500">Future note</p><p className="font-semibold">{detailOrder.future_note}</p></div>
+            ) : null}
             <div><p className="text-slate-500">Created</p><p className="font-semibold">{detailOrder.created_at ? new Date(detailOrder.created_at).toLocaleString() : '-'}</p></div>
             <div><p className="text-slate-500">Updated</p><p className="font-semibold">{detailOrder.updated_at ? new Date(detailOrder.updated_at).toLocaleString() : '-'}</p></div>
             <button onClick={() => showCustomerProfile(detailOrder)} className="rounded-md bg-teal-600 px-3 py-2 text-sm font-semibold text-white sm:col-span-2 lg:col-span-4">Open Customer Profile</button>

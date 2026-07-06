@@ -17,13 +17,16 @@ async function ensureOrderArchiveSupport() {
      FROM INFORMATION_SCHEMA.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE()
        AND TABLE_NAME = 'orders'
-       AND COLUMN_NAME IN ('deleted_at', 'deleted_by', 'is_deleted', 'archived_from_active_list')`
+       AND COLUMN_NAME IN ('deleted_at', 'deleted_by', 'is_deleted', 'archived_from_active_list', 'is_future_order', 'future_needed_date', 'future_note')`
   );
   const existing = new Set(columns.map((column) => column.COLUMN_NAME));
   if (!existing.has('deleted_at')) await query('ALTER TABLE orders ADD COLUMN deleted_at TIMESTAMP NULL AFTER updated_at');
   if (!existing.has('deleted_by')) await query('ALTER TABLE orders ADD COLUMN deleted_by INT NULL AFTER deleted_at');
   if (!existing.has('is_deleted')) await query('ALTER TABLE orders ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT FALSE AFTER deleted_by');
   if (!existing.has('archived_from_active_list')) await query('ALTER TABLE orders ADD COLUMN archived_from_active_list BOOLEAN NOT NULL DEFAULT FALSE AFTER is_deleted');
+  if (!existing.has('is_future_order')) await query('ALTER TABLE orders ADD COLUMN is_future_order BOOLEAN NOT NULL DEFAULT FALSE AFTER is_fast');
+  if (!existing.has('future_needed_date')) await query('ALTER TABLE orders ADD COLUMN future_needed_date DATE NULL AFTER is_future_order');
+  if (!existing.has('future_note')) await query('ALTER TABLE orders ADD COLUMN future_note TEXT NULL AFTER future_needed_date');
   hasCheckedOrderArchiveColumns = true;
 }
 
@@ -51,7 +54,7 @@ router.get('/orders', async (req, res, next) => {
     const where = `WHERE ${filters.join(' AND ')}`;
 
     const orders = await query(
-      `SELECT o.id, o.order_number, o.order_quantity, o.needed_date, o.is_fast, o.production_progress, o.design_notes, o.status_id,
+      `SELECT o.id, o.order_number, o.order_quantity, o.needed_date, o.is_fast, o.is_future_order, o.future_needed_date, o.future_note, o.production_progress, o.design_notes, o.status_id,
         c.name AS customer_name, c.phone AS customer_phone, p.name AS product_name,
         s.name AS status_name, s.color AS status_color,
         admin.name AS assigned_by_admin_name, oa.assigned_by_role, oa.assignment_started_at AS assigned_at,

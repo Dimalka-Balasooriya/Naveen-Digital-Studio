@@ -17,6 +17,8 @@ export default function CommissionPage() {
   const { user } = useAuth();
   const canManageCommission = ['OWNER', 'CO_ADMIN'].includes(normalizeRole(user?.role));
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [overview, setOverview] = useState({ summary: [], records: [], top_earner: null });
   const [loading, setLoading] = useState(false);
   const [actionId, setActionId] = useState(null);
@@ -27,7 +29,13 @@ export default function CommissionPage() {
     setLoading(true);
     setError('');
     try {
-      const { data } = await api.get('/commissions/overview', { params: { month } });
+      const { data } = await api.get('/commissions/overview', {
+        params: {
+          month,
+          from_date: fromDate || undefined,
+          to_date: toDate || undefined
+        }
+      });
       setOverview(data);
     } catch (requestError) {
       setError(requestError.response?.data?.message || 'Commission data could not be loaded.');
@@ -38,7 +46,7 @@ export default function CommissionPage() {
 
   useEffect(() => {
     load();
-  }, [month]);
+  }, [month, fromDate, toDate]);
 
   async function markPaid(record) {
     if (!confirm(`Pay commission for ${record.employee_name}? Current commission balance will become Rs. 0.`)) return;
@@ -82,7 +90,33 @@ export default function CommissionPage() {
           <h1 className="text-2xl font-semibold text-slate-950">Commission Dashboard</h1>
           <p className="text-sm text-slate-500">Daily, weekly, monthly, and total commission for every employee and co-admin.</p>
         </div>
-        <input type="month" className={`${inputClass} max-w-xs`} value={month} onChange={(event) => setMonth(event.target.value)} />
+        <div className="grid gap-2 sm:grid-cols-4 xl:min-w-[760px]">
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Month
+            <input type="month" className={`${inputClass} mt-1`} value={month} onChange={(event) => setMonth(event.target.value)} />
+          </label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            From
+            <input type="date" className={`${inputClass} mt-1`} value={fromDate} onChange={(event) => setFromDate(event.target.value)} />
+          </label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            To
+            <input type="date" className={`${inputClass} mt-1`} value={toDate} onChange={(event) => setToDate(event.target.value)} />
+          </label>
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={() => {
+                setFromDate('');
+                setToDate('');
+              }}
+              className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600"
+              disabled={!fromDate && !toDate}
+            >
+              Clear Dates
+            </button>
+          </div>
+        </div>
       </div>
 
       {notice ? <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">{notice}</div> : null}

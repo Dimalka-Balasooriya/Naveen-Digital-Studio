@@ -34,6 +34,9 @@ const orderSchema = z.object({
   co_admin_id: z.number().int().positive().optional().nullable(),
   needed_date: z.string().min(10),
   is_fast: z.boolean().optional(),
+  is_future_order: z.boolean().optional(),
+  future_needed_date: z.string().min(10).optional().nullable(),
+  future_note: z.string().optional().nullable(),
   quantity: z.number().int().positive().optional(),
   order_quantity: z.number().int().positive().optional(),
   total_amount: z.number().nonnegative().optional(),
@@ -111,7 +114,11 @@ async function ensureOrderArchiveSupport({ connection = null } = {}) {
      FROM INFORMATION_SCHEMA.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE()
        AND TABLE_NAME = 'orders'
-       AND COLUMN_NAME IN ('deleted_at', 'deleted_by', 'is_deleted', 'archived_from_active_list', 'assigned_co_admin_id', 'courier_service_id', 'tracking_number')`
+       AND COLUMN_NAME IN (
+        'deleted_at', 'deleted_by', 'is_deleted', 'archived_from_active_list',
+        'assigned_co_admin_id', 'courier_service_id', 'tracking_number',
+        'is_future_order', 'future_needed_date', 'future_note'
+       )`
   );
   const existing = new Set(columns.map((column) => column.COLUMN_NAME));
   if (!existing.has('deleted_at')) {
@@ -134,6 +141,15 @@ async function ensureOrderArchiveSupport({ connection = null } = {}) {
   }
   if (!existing.has('tracking_number')) {
     await runner('ALTER TABLE orders ADD COLUMN tracking_number VARCHAR(120) NULL AFTER courier_service_id');
+  }
+  if (!existing.has('is_future_order')) {
+    await runner('ALTER TABLE orders ADD COLUMN is_future_order BOOLEAN NOT NULL DEFAULT FALSE AFTER is_fast');
+  }
+  if (!existing.has('future_needed_date')) {
+    await runner('ALTER TABLE orders ADD COLUMN future_needed_date DATE NULL AFTER is_future_order');
+  }
+  if (!existing.has('future_note')) {
+    await runner('ALTER TABLE orders ADD COLUMN future_note TEXT NULL AFTER future_needed_date');
   }
   hasCheckedOrderArchiveColumns = true;
 }
@@ -255,8 +271,9 @@ async function insertOrderWithUniqueNumber({ connection, body, customerId, produ
       const [orderResult] = await connection.execute(
         `INSERT INTO orders (
           order_number, customer_id, product_id, facebook_page_id, courier_service_id, tracking_number, status_id, assigned_employee_id, assigned_co_admin_id,
-          needed_date, is_fast, quantity, order_quantity, total_amount, advance_amount, design_notes, return_reason, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          needed_date, is_fast, is_future_order, future_needed_date, future_note,
+          quantity, order_quantity, total_amount, advance_amount, design_notes, return_reason, created_by
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           orderNumber,
           customerId,
@@ -269,6 +286,9 @@ async function insertOrderWithUniqueNumber({ connection, body, customerId, produ
           body.co_admin_id || null,
           body.needed_date,
           body.is_fast || false,
+          body.is_future_order || false,
+          body.is_future_order ? (body.future_needed_date || body.needed_date) : null,
+          body.future_note || null,
           body.order_quantity || body.quantity || 1,
           body.order_quantity || body.quantity || 1,
           body.total_amount || 0,
@@ -407,6 +427,14 @@ router.get('/', authenticate, requireRole('admin'), async (req, res, next) => {
     if (req.query.status) {
       filters.push('s.name = :status_name');
       params.status_name = req.query.status;
+    }
+    if (req.query.from_date) {
+      filters.push('DATE(o.created_at) >= :from_date');
+      params.from_date = req.query.from_date;
+    }
+    if (req.query.to_date) {
+      filters.push('DATE(o.created_at) <= :to_date');
+      params.to_date = req.query.to_date;
     }
     if (req.query.fast === 'true') {
       filters.push('o.is_fast = TRUE');
@@ -798,7 +826,17 @@ router.put('/:id', authenticate, requireRole('admin'), async (req, res, next) =>
       body.assigned_co_admin_id = body.co_admin_id || null;
     }
 
-    const allowed = ['product_id', 'facebook_page_id', 'courier_service_id', 'tracking_number', 'status_id', 'assigned_employee_id', 'assigned_co_admin_id', 'needed_date', 'is_fast', 'quantity', 'order_quantity', 'total_amount', 'advance_amount', 'design_notes', 'return_reason'];
+    if (Object.prototype.hasOwnProperty.call(body, 'is_future_order')) {
+      body.future_needed_date = body.is_future_order ? (body.future_needed_date || body.needed_date || null) : null;
+      body.future_note = body.is_future_order ? (body.future_note || null) : null;
+    }
+
+    const allowed = [
+      'product_id', 'facebook_page_id', 'courier_service_id', 'tracking_number', 'status_id',
+      'assigned_employee_id', 'assigned_co_admin_id', 'needed_date', 'is_fast', 'is_future_order',
+      'future_needed_date', 'future_note', 'quantity', 'order_quantity', 'total_amount',
+      'advance_amount', 'design_notes', 'return_reason'
+    ];
     const updates = Object.fromEntries(Object.entries(body).filter(([key]) => allowed.includes(key)));
     const keys = Object.keys(updates);
     let workflowMessage = null;

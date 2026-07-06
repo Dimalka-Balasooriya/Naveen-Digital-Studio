@@ -126,11 +126,18 @@ router.get('/overview', requireRole('admin', 'production'), async (req, res, nex
     const month = req.query.month || new Date().toISOString().slice(0, 7);
     const monthStart = `${month}-01`;
     const employeeId = req.query.employee_id ? Number(req.query.employee_id) : null;
+    const fromDate = req.query.from_date || null;
+    const toDate = req.query.to_date || null;
 
     const employeeFilter = employeeId ? 'AND e.id = :employeeId' : '';
     const roleFilter = req.query.role ? 'AND r.name = :role' : '';
     const statusFilter = req.query.status ? 'AND s.name = :status' : '';
-    const params = { monthStart, employeeId, role: req.query.role || null, status: req.query.status || null };
+    const commissionDateFilters = [];
+    if (fromDate) commissionDateFilters.push('DATE(c.assignment_started_at) >= :fromDate');
+    if (toDate) commissionDateFilters.push('DATE(c.assignment_started_at) <= :toDate');
+    const commissionJoinDateFilter = commissionDateFilters.length ? ` AND ${commissionDateFilters.join(' AND ')}` : '';
+    const commissionWhereDateFilter = commissionDateFilters.length ? `AND ${commissionDateFilters.join(' AND ')}` : '';
+    const params = { monthStart, employeeId, role: req.query.role || null, status: req.query.status || null, fromDate, toDate };
 
     const summary = await query(
       `SELECT
@@ -148,7 +155,7 @@ router.get('/overview', requireRole('admin', 'production'), async (req, res, nex
         MAX(c.updated_at) AS last_commission_updated_at
        FROM employees e
        JOIN roles r ON r.id = e.role_id
-       LEFT JOIN commissions c ON c.employee_id = e.id
+       LEFT JOIN commissions c ON c.employee_id = e.id ${commissionJoinDateFilter}
        LEFT JOIN orders o ON o.id = c.order_id
        LEFT JOIN order_statuses s ON s.id = o.status_id
        WHERE r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE')
@@ -174,6 +181,7 @@ router.get('/overview', requireRole('admin', 'production'), async (req, res, nex
          ${employeeFilter}
          ${roleFilter}
          ${statusFilter}
+         ${commissionWhereDateFilter}
        ORDER BY c.assignment_started_at DESC, c.id DESC`,
       params
     );

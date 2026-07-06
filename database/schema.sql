@@ -99,6 +99,9 @@ CREATE TABLE orders (
   assigned_co_admin_id INT,
   needed_date DATE NOT NULL,
   is_fast BOOLEAN NOT NULL DEFAULT FALSE,
+  is_future_order BOOLEAN NOT NULL DEFAULT FALSE,
+  future_needed_date DATE NULL,
+  future_note TEXT,
   quantity INT NOT NULL DEFAULT 1,
   order_quantity INT NOT NULL DEFAULT 1,
   total_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
@@ -123,6 +126,7 @@ CREATE TABLE orders (
   CONSTRAINT fk_orders_created_by FOREIGN KEY (created_by) REFERENCES employees(id),
   INDEX idx_orders_needed_date (needed_date),
   INDEX idx_orders_fast (is_fast),
+  INDEX idx_orders_future (is_future_order, future_needed_date),
   INDEX idx_orders_assignee (assigned_employee_id),
   INDEX idx_orders_assigned_co_admin (assigned_co_admin_id)
 );

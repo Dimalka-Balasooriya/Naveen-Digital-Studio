@@ -12,20 +12,23 @@ async function ensureOrderArchiveSupport() {
      FROM INFORMATION_SCHEMA.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE()
        AND TABLE_NAME = 'orders'
-       AND COLUMN_NAME IN ('deleted_at', 'deleted_by', 'is_deleted', 'archived_from_active_list')`
+       AND COLUMN_NAME IN ('deleted_at', 'deleted_by', 'is_deleted', 'archived_from_active_list', 'is_future_order', 'future_needed_date', 'future_note')`
   );
   const existing = new Set(columns.map((column) => column.COLUMN_NAME));
   if (!existing.has('deleted_at')) await query('ALTER TABLE orders ADD COLUMN deleted_at TIMESTAMP NULL AFTER updated_at');
   if (!existing.has('deleted_by')) await query('ALTER TABLE orders ADD COLUMN deleted_by INT NULL AFTER deleted_at');
   if (!existing.has('is_deleted')) await query('ALTER TABLE orders ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT FALSE AFTER deleted_by');
   if (!existing.has('archived_from_active_list')) await query('ALTER TABLE orders ADD COLUMN archived_from_active_list BOOLEAN NOT NULL DEFAULT FALSE AFTER is_deleted');
+  if (!existing.has('is_future_order')) await query('ALTER TABLE orders ADD COLUMN is_future_order BOOLEAN NOT NULL DEFAULT FALSE AFTER is_fast');
+  if (!existing.has('future_needed_date')) await query('ALTER TABLE orders ADD COLUMN future_needed_date DATE NULL AFTER is_future_order');
+  if (!existing.has('future_note')) await query('ALTER TABLE orders ADD COLUMN future_note TEXT NULL AFTER future_needed_date');
   hasCheckedOrderArchiveColumns = true;
 }
 
 router.get('/', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
     await ensureOrderArchiveSupport();
-    const [counts, recentOrders, weeklyTrend, leaderboard, completionTrend, commissionTotals, fastReminders] = await Promise.all([
+    const [counts, recentOrders, weeklyTrend, leaderboard, completionTrend, commissionTotals, fastReminders, futureReminders] = await Promise.all([
       query(
         `SELECT
           COUNT(DISTINCT CASE WHEN DATE(o.created_at) = CURDATE() THEN o.id END) AS daily_order_quantity,
@@ -34,14 +37,15 @@ router.get('/', authenticate, requireRole('admin'), async (req, res, next) => {
           COUNT(DISTINCT CASE WHEN LOWER(s.name) = 'completed' THEN o.id END) AS completed_quantity,
           COUNT(DISTINCT CASE WHEN LOWER(s.name) = 'pending' THEN o.id END) AS pending_quantity,
           COUNT(DISTINCT CASE WHEN LOWER(s.name) IN ('returned', 'return') THEN o.id END) AS returned_quantity,
-          COUNT(DISTINCT CASE WHEN o.is_fast = TRUE THEN o.id END) AS fast_orders_count
+          COUNT(DISTINCT CASE WHEN o.is_fast = TRUE THEN o.id END) AS fast_orders_count,
+          COUNT(DISTINCT CASE WHEN o.is_future_order = TRUE THEN o.id END) AS future_orders_count
         FROM orders o
         JOIN order_statuses s ON s.id = o.status_id
         WHERE COALESCE(o.archived_from_active_list, FALSE) = FALSE`
       ),
       query(
         `SELECT o.id, o.order_number, o.order_quantity, c.name AS customer_name, p.name AS product_name,
-          s.name AS status_name, s.color AS status_color, o.is_fast, o.needed_date
+          s.name AS status_name, s.color AS status_color, o.is_fast, o.is_future_order, o.needed_date, o.future_needed_date
          FROM orders o
          JOIN customers c ON c.id = o.customer_id
          JOIN products p ON p.id = o.product_id
@@ -123,6 +127,19 @@ router.get('/', authenticate, requireRole('admin'), async (req, res, next) => {
            AND s.name NOT IN ('Completed', 'Returned')
            AND COALESCE(o.archived_from_active_list, FALSE) = FALSE
          ORDER BY o.needed_date ASC
+        LIMIT 6`
+      ),
+      query(
+        `SELECT o.id, o.order_number, o.order_quantity, c.name AS customer_name, e.name AS employee_name,
+          o.needed_date, o.future_needed_date, o.future_note
+         FROM orders o
+         JOIN customers c ON c.id = o.customer_id
+         LEFT JOIN employees e ON e.id = o.assigned_employee_id
+         JOIN order_statuses s ON s.id = o.status_id
+         WHERE o.is_future_order = TRUE
+           AND LOWER(s.name) NOT IN ('complete', 'completed', 'returned', 'return', 'cancel', 'cancelled', 'canceled')
+           AND COALESCE(o.archived_from_active_list, FALSE) = FALSE
+         ORDER BY COALESCE(o.future_needed_date, o.needed_date) ASC
          LIMIT 6`
       )
     ]);
@@ -140,6 +157,7 @@ router.get('/', authenticate, requireRole('admin'), async (req, res, next) => {
       completionTrend,
       commissionTotals,
       fastReminders,
+      futureReminders,
       highlights: {
         mostCompleted: leaderboard[0] || null,
         leastCompleted: leaderboard[leaderboard.length - 1] || null,

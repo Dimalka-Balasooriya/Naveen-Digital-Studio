@@ -179,19 +179,22 @@ export default function ProductionDashboard() {
         </div>
         <div className="grid divide-y divide-slate-100">
           {orders.map((order) => (
-            <article key={order.id} className={`p-5 ${order.is_fast ? 'bg-orange-50/60' : 'bg-white'}`}>
+            <article key={order.id} className={`p-5 ${order.is_fast ? 'bg-orange-50/60' : order.is_future_order ? 'bg-sky-50/60' : 'bg-white'}`}>
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <h4 className="font-semibold text-slate-950">{order.order_number}</h4>
                     <StatusBadge color={order.status_color}>{order.status_name}</StatusBadge>
                     {order.is_fast ? <span className="inline-flex items-center gap-1 rounded bg-orange-100 px-2 py-1 text-xs font-semibold text-orange-700"><Zap size={13} />Fast</span> : null}
+                    {order.is_future_order ? <span className="inline-flex items-center gap-1 rounded bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-700"><Clock size={13} />Future</span> : null}
                   </div>
                   <p className="mt-1 text-sm text-slate-600">{order.customer_name} · {order.customer_phone} · {order.product_name} · Qty {order.order_quantity || 1}</p>
                   <p className="mt-1 flex items-center gap-1 text-xs text-slate-500"><Clock size={14} /> Needed {order.needed_date?.slice(0, 10)}</p>
+                  {order.is_future_order ? <p className="mt-1 text-xs font-semibold text-sky-700">Future needed {(order.future_needed_date || order.needed_date)?.slice(0, 10)}</p> : null}
                   <p className="mt-1 text-xs text-slate-500">
                     Assigned by {order.assigned_by_admin_name || 'Not recorded'} {order.assigned_by_role ? `(${order.assigned_by_role})` : ''} · {order.assigned_at ? new Date(order.assigned_at).toLocaleString() : 'No date'} · Commission Rs. {Number(order.assigned_commission || 0).toLocaleString()}
                   </p>
+                  {order.is_future_order && order.future_note ? <p className="mt-2 text-sm text-sky-800">{order.future_note}</p> : null}
                   {order.design_notes ? <p className="mt-2 text-sm text-slate-700">{order.design_notes}</p> : null}
                 </div>
                 <div className="w-full lg:w-72">

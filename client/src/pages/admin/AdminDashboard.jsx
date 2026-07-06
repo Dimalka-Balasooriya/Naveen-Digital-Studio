@@ -28,6 +28,7 @@ export default function AdminDashboard() {
         <StatCard label="Weekly Orders" value={summary.weekly_order_quantity} />
         <StatCard label="Monthly Orders" value={summary.monthly_order_quantity} />
         <StatCard label="Fast Orders" value={summary.fast_orders_count} tone="orange" />
+        <StatCard label="Future Orders" value={summary.future_orders_count} tone="teal" />
         <StatCard label="Completed Orders" value={summary.completed_quantity} tone="green" />
         <StatCard label="Pending Orders" value={summary.pending_quantity} />
         <StatCard label="Returned Orders" value={summary.returned_quantity} tone="rose" />
@@ -131,6 +132,25 @@ export default function AdminDashboard() {
               </div>
             ))}
             {!data?.fastReminders?.length ? <p className="text-sm text-orange-800">No pending fast orders.</p> : null}
+          </div>
+        </section>
+
+        <section className="rounded-md border border-sky-200 bg-sky-50 p-5">
+          <h3 className="text-base font-semibold text-sky-950">Future Order Reminders</h3>
+          <div className="mt-4 space-y-3">
+            {(data?.futureReminders || []).map((order) => (
+              <div key={order.id} className="rounded-md border border-sky-200 bg-white p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-semibold text-slate-950">{order.order_number}</p>
+                  <StatusBadge color="sky">Future</StatusBadge>
+                </div>
+                <p className="text-sm text-slate-600">
+                  {order.customer_name} · Qty {order.order_quantity || 1} · {order.employee_name || 'Unassigned'} · Future {(order.future_needed_date || order.needed_date)?.slice(0, 10)}
+                </p>
+                {order.future_note ? <p className="mt-1 text-sm text-sky-800">{order.future_note}</p> : null}
+              </div>
+            ))}
+            {!data?.futureReminders?.length ? <p className="text-sm text-sky-800">No pending future orders.</p> : null}
           </div>
         </section>
       </div>
