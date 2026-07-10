@@ -2,7 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { query } from '../config/db.js';
-import { authenticate, requireAdminOrCoAdmin, requireOwner } from '../middleware/auth.js';
+import { authenticate, requireAdminOrCoAdmin } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -54,7 +54,7 @@ router.get('/', authenticate, requireAdminOrCoAdmin, async (req, res, next) => {
     const employees = await query(
       `SELECT e.id, e.name, e.email, e.phone, e.address, e.is_active, e.created_at, r.name AS role,
         COUNT(o.id) AS assigned_orders,
-        SUM(s.name = 'Completed') AS completed_orders
+        SUM(LOWER(s.name) IN ('complete', 'completed')) AS completed_orders
        FROM employees e
        JOIN roles r ON r.id = e.role_id
        LEFT JOIN orders o ON o.assigned_employee_id = e.id
@@ -75,9 +75,6 @@ router.post('/', authenticate, requireAdminOrCoAdmin, async (req, res, next) => 
     const body = employeeSchema.extend({ password: z.string().min(6) }).parse(req.body);
     if (body.role === 'OWNER') {
       return res.status(403).json({ message: 'The owner account is managed separately.' });
-    }
-    if (req.user.role !== 'OWNER' && body.role !== 'PRODUCTION_EMPLOYEE' && body.role !== 'production') {
-      return res.status(403).json({ message: 'Only the owner can create owners or co-admins.' });
     }
     const roles = await query('SELECT id FROM roles WHERE name = :role', { role: body.role });
     if (!roles.length) return res.status(400).json({ message: 'Selected role is not available in the database.' });
@@ -159,9 +156,6 @@ router.put('/:id', authenticate, requireAdminOrCoAdmin, async (req, res, next) =
     if (targetRole === 'OWNER') {
       return res.status(403).json({ message: 'The owner account cannot be managed from Employees.' });
     }
-    if (req.user.role !== 'OWNER' && (targetRole === 'OWNER' || body.role === 'OWNER' || body.role === 'CO_ADMIN')) {
-      return res.status(403).json({ message: 'Co-admins cannot edit owner or co-admin permissions.' });
-    }
     if (body.role === 'OWNER') {
       return res.status(403).json({ message: 'The owner account is managed separately.' });
     }
@@ -214,10 +208,6 @@ router.patch('/:id/status', authenticate, requireAdminOrCoAdmin, async (req, res
     if (targetRole === 'OWNER') {
       return res.status(403).json({ message: 'The owner account cannot be deactivated.' });
     }
-    if (req.user.role !== 'OWNER' && targetRole === 'CO_ADMIN') {
-      return res.status(403).json({ message: 'Only the owner can change co-admin status.' });
-    }
-
     await query('UPDATE employees SET is_active = :is_active WHERE id = :id', { id: req.params.id, is_active: body.is_active });
     const rows = await query(
       `SELECT e.id, e.name, e.email, e.phone, e.address, e.is_active, e.created_at, r.name AS role
@@ -245,9 +235,6 @@ router.delete('/:id', authenticate, requireAdminOrCoAdmin, async (req, res, next
     const targetRole = String(target[0]?.role || '').toUpperCase();
     if (targetRole === 'OWNER') {
       return res.status(403).json({ message: 'The owner account cannot be removed.' });
-    }
-    if (req.user.role !== 'OWNER' && targetRole === 'CO_ADMIN') {
-      return res.status(403).json({ message: 'Only the owner can remove co-admins.' });
     }
     if (target[0].is_active) {
       return res.status(400).json({ message: 'Deactivate this employee before deleting.' });

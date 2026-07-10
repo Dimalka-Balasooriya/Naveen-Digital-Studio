@@ -15,22 +15,41 @@ export default function ProductionDashboard() {
   const [commissionSearch, setCommissionSearch] = useState('');
   const [commissionMonth, setCommissionMonth] = useState(new Date().toISOString().slice(0, 7));
   const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
 
   async function load() {
-    const [ordersRes, statsRes, remindersRes, statusesRes, commissionsRes, allCommissionsRes] = await Promise.all([
+    setError('');
+    const [
+      ordersRes,
+      statsRes,
+      remindersRes,
+      statusesRes,
+      commissionsRes,
+      allCommissionsRes
+    ] = await Promise.allSettled([
       api.get('/production/orders'),
       api.get('/production/profile/stats'),
       api.get('/reminders'),
-      api.get('/lookups/statuses'),
+      api.get('/production/statuses'),
       api.get('/production/commissions'),
       api.get('/commissions/all', { params: { month: commissionMonth } })
     ]);
-    setOrders(ordersRes.data);
-    setStats(statsRes.data);
-    setReminders(remindersRes.data);
-    setStatuses(statusesRes.data);
-    setCommissions(commissionsRes.data);
-    setAllCommissions(allCommissionsRes.data);
+
+    if (ordersRes.status === 'fulfilled') setOrders(ordersRes.value.data);
+    else {
+      setOrders([]);
+      setError(ordersRes.reason?.response?.data?.message || 'Assigned orders could not be loaded.');
+    }
+    if (statsRes.status === 'fulfilled') setStats(statsRes.value.data);
+    if (remindersRes.status === 'fulfilled') setReminders(remindersRes.value.data);
+    if (statusesRes.status === 'fulfilled') setStatuses(statusesRes.value.data);
+    else {
+      const fallback = await api.get('/lookups/statuses').catch(() => ({ data: [] }));
+      const allowedNames = new Set(['new', 'editing', 'editing done', 'correction send', 'correction done', 'save', 'message send']);
+      setStatuses(fallback.data.filter((status) => allowedNames.has(String(status.name || '').trim().toLowerCase())));
+    }
+    if (commissionsRes.status === 'fulfilled') setCommissions(commissionsRes.value.data);
+    if (allCommissionsRes.status === 'fulfilled') setAllCommissions(allCommissionsRes.value.data);
   }
 
   useEffect(() => {
@@ -52,6 +71,7 @@ export default function ProductionDashboard() {
   }
 
   async function updateStatus(order, statusId) {
+    if (!statusId) return;
     const { data } = await api.patch(`/orders/${order.id}/status`, { status_id: Number(statusId), note: 'Updated by production employee' });
     setNotice(data.message || 'Status updated.');
     await load();
@@ -67,6 +87,11 @@ export default function ProductionDashboard() {
       {notice ? (
         <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
           {notice}
+        </div>
+      ) : null}
+      {error ? (
+        <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
+          {error}
         </div>
       ) : null}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -198,7 +223,12 @@ export default function ProductionDashboard() {
                   {order.design_notes ? <p className="mt-2 text-sm text-slate-700">{order.design_notes}</p> : null}
                 </div>
                 <div className="w-full lg:w-72">
-                  <select className="mb-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm" value={order.status_id} onChange={(event) => updateStatus(order, event.target.value)}>
+                  <select
+                    className="mb-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    value={statuses.some((status) => Number(status.id) === Number(order.status_id)) ? order.status_id : ''}
+                    onChange={(event) => updateStatus(order, event.target.value)}
+                  >
+                    <option value="" disabled>Select production status</option>
                     {statuses.map((status) => <option key={status.id} value={status.id}>{titleCase(status.name)}</option>)}
                   </select>
                   <div className="flex items-center justify-between text-sm">

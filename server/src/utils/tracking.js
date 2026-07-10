@@ -141,6 +141,64 @@ export function returnedCancelReason(statusName) {
   return null;
 }
 
+export const productionAllowedStatuses = [
+  { name: 'New', color: '#0EA5E9' },
+  { name: 'Editing', color: '#10B981' },
+  { name: 'Editing Done', color: '#8B5CF6' },
+  { name: 'Correction Send', color: '#F97316' },
+  { name: 'Correction Done', color: '#84CC16' },
+  { name: 'Save', color: '#A855F7' },
+  { name: 'Message Send', color: '#14B8A6' }
+];
+
+function normalizeStatusName(value = '') {
+  return String(value).trim().toLowerCase();
+}
+
+export async function ensureProductionAllowedStatuses({ connection = null } = {}) {
+  const existingRows = await run(
+    connection,
+    `SELECT id, name, color, sort_order
+     FROM order_statuses
+     WHERE is_active = TRUE`
+  );
+  const existingByName = new Map(existingRows.map((status) => [normalizeStatusName(status.name), status]));
+  let maxSortOrder = existingRows.reduce((max, status) => Math.max(max, Number(status.sort_order || 0)), 0);
+
+  for (const status of productionAllowedStatuses) {
+    const normalized = normalizeStatusName(status.name);
+    if (!existingByName.has(normalized)) {
+      maxSortOrder += 1;
+      await run(
+        connection,
+        `INSERT INTO order_statuses (name, color, sort_order, is_final, is_active)
+         VALUES (?, ?, ?, FALSE, TRUE)`,
+        [status.name, status.color, maxSortOrder]
+      );
+    }
+  }
+
+  const refreshedRows = await run(
+    connection,
+    `SELECT id, name, color, sort_order
+     FROM order_statuses
+     WHERE is_active = TRUE`
+  );
+  const orderMap = new Map(productionAllowedStatuses.map((status, index) => [normalizeStatusName(status.name), index]));
+
+  return refreshedRows
+    .filter((status) => orderMap.has(normalizeStatusName(status.name)))
+    .sort((a, b) => orderMap.get(normalizeStatusName(a.name)) - orderMap.get(normalizeStatusName(b.name)));
+}
+
+export async function isProductionAllowedStatus({ statusId, connection = null }) {
+  await ensureProductionAllowedStatuses({ connection });
+  const rows = await run(connection, 'SELECT name FROM order_statuses WHERE id = ? AND is_active = TRUE', [statusId]);
+  if (!rows.length) return false;
+  const allowedNames = new Set(productionAllowedStatuses.map((status) => normalizeStatusName(status.name)));
+  return allowedNames.has(normalizeStatusName(rows[0].name));
+}
+
 export async function seedDefaultOrderStatuses({ connection = null } = {}) {
   for (const [index, status] of defaultOrderStatuses.entries()) {
     await run(

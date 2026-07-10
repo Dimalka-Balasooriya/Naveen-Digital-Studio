@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { query } from '../config/db.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
 import { ensureOrderTasks } from '../utils/orders.js';
-import { applyOrderStatusWorkflow, recordStatusChange } from '../utils/tracking.js';
+import { applyOrderStatusWorkflow, ensureProductionAllowedStatuses, isProductionAllowedStatus, recordStatusChange } from '../utils/tracking.js';
 
 const router = Router();
 
@@ -29,6 +29,15 @@ async function ensureOrderArchiveSupport() {
   if (!existing.has('future_note')) await query('ALTER TABLE orders ADD COLUMN future_note TEXT NULL AFTER future_needed_date');
   hasCheckedOrderArchiveColumns = true;
 }
+
+router.get('/statuses', async (req, res, next) => {
+  try {
+    const statuses = await ensureProductionAllowedStatuses();
+    res.json(statuses);
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get('/orders', async (req, res, next) => {
   try {
@@ -105,6 +114,12 @@ router.patch('/orders/:id/progress', async (req, res, next) => {
       && !Number(ownership[0].has_history_access)
       && !Number(ownership[0].has_assignment_access)) {
       return res.status(403).json({ message: 'This order is not assigned to you.' });
+    }
+    if (req.user.role === 'PRODUCTION_EMPLOYEE' && body.status_id) {
+      const allowed = await isProductionAllowedStatus({ statusId: body.status_id });
+      if (!allowed) {
+        return res.status(403).json({ message: 'Production employees can only use production allowed statuses.' });
+      }
     }
 
     await query(

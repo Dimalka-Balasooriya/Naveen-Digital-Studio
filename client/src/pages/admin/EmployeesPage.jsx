@@ -4,13 +4,10 @@ import { api } from '../../services/api';
 import Modal from '../../components/Modal';
 import { Field, inputClass } from '../../components/FormFields';
 import PasswordField from '../../components/PasswordField';
-import { isOwner } from '../../utils/roles';
-import { useAuth } from '../../context/AuthContext';
 
 const emptyEmployee = { name: '', email: '', phone: '', address: '', role: 'PRODUCTION_EMPLOYEE', password: '', confirm_password: '', is_active: true };
 
 export default function EmployeesPage() {
-  const { user } = useAuth();
   const [employees, setEmployees] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(emptyEmployee);
@@ -172,7 +169,7 @@ export default function EmployeesPage() {
           <Field label="Phone"><input className={inputClass} value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} /></Field>
           <Field label="Address"><input className={inputClass} value={form.address} onChange={(event) => setForm({ ...form, address: event.target.value })} /></Field>
           <Field label="Role"><select className={inputClass} value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}>
-            {isOwner(user?.role) ? <option value="CO_ADMIN">Co-admin</option> : null}
+            <option value="CO_ADMIN">Co-admin</option>
             <option value="PRODUCTION_EMPLOYEE">Production Employee</option>
           </select></Field>
           <Field label={editingEmployee ? 'New password' : 'Password'}>

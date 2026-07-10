@@ -7,6 +7,7 @@ import {
   applyOrderStatusWorkflow,
   cancelOrderCommissions,
   ensureStatusWorkflowSupport,
+  isProductionAllowedStatus,
   isCompleteStatusName,
   recordOrderAssignment,
   recordStatusChange,
@@ -935,6 +936,13 @@ router.patch('/:id/status', authenticate, requireRole('admin', 'production'), as
       && !Number(rows[0].has_assignment_access)) {
       await connection.rollback();
       return res.status(403).json({ message: 'This order is not assigned to you.' });
+    }
+    if (req.user.role === 'PRODUCTION_EMPLOYEE') {
+      const allowed = await isProductionAllowedStatus({ statusId: body.status_id, connection });
+      if (!allowed) {
+        await connection.rollback();
+        return res.status(403).json({ message: 'Production employees can only use production allowed statuses.' });
+      }
     }
     await connection.execute('UPDATE orders SET status_id = ? WHERE id = ?', [body.status_id, req.params.id]);
     await recordStatusChange({
