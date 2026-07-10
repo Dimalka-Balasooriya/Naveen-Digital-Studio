@@ -45,7 +45,7 @@ export default function App() {
         <Route path="admin/reports" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><ReportsPage /></ProtectedRoute>} />
         <Route path="admin/settings" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><SettingsPage /></ProtectedRoute>} />
         <Route path="production" element={<ProtectedRoute roles={['PRODUCTION_EMPLOYEE', 'OWNER', 'CO_ADMIN']}><ProductionDashboard /></ProtectedRoute>} />
-        <Route path="stock" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE']}><StockPage /></ProtectedRoute>} />
+        <Route path="stock" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><StockPage /></ProtectedRoute>} />
         <Route path="messages" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE']}><MessagesPage /></ProtectedRoute>} />
         <Route path="commissions" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE']}><CommissionPage /></ProtectedRoute>} />
         <Route path="help" element={<HelpPage />} />

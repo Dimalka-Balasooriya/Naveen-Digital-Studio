@@ -20,7 +20,6 @@ const adminLinks = [
 
 const productionLinks = [
   { to: '/production', label: 'Production', icon: Boxes },
-  { to: '/stock', label: 'Stock', icon: Warehouse },
   { to: '/messages', label: 'Messages', icon: Mail, badge: 'messages' },
   { to: '/commissions', label: 'Commission', icon: WalletCards },
   { to: '/help', label: 'Help', icon: HelpCircle }

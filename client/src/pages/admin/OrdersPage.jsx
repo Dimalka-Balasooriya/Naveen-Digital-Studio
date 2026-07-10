@@ -276,7 +276,7 @@ export default function OrdersPage() {
     if (!confirm('Remove this order from active list? It will remain in customer history and reports.')) return;
     try {
       const { data } = await api.delete(`/orders/${id}`);
-      setNotice(data.message || 'Order removed from active list.');
+      setNotice(data.message || 'Successfully Deleted.');
       await load();
     } catch (requestError) {
       setError(requestError.response?.data?.message || 'Order could not be removed.');

@@ -1044,7 +1044,7 @@ router.delete('/:id', authenticate, requireRole('admin'), async (req, res, next)
       [req.params.id, req.user.id, 'Archived order', 'Removed from active order list']
     );
     await connection.commit();
-    res.json({ message: 'Order removed from active list. It remains in customer history and reports.' });
+    res.json({ message: 'Successfully Deleted.' });
   } catch (error) {
     await connection.rollback();
     next(error);

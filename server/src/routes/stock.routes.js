@@ -2,7 +2,7 @@ import { Router } from 'express';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import { z } from 'zod';
-import { authenticate, requireAdminOrCoAdmin, requireOwner, requireProductionOrAdmin } from '../middleware/auth.js';
+import { authenticate, requireAdminOrCoAdmin, requireOwner } from '../middleware/auth.js';
 import { query } from '../config/db.js';
 
 const router = Router();
@@ -531,7 +531,7 @@ function sendWholesaleBillPdf(res, bill) {
   doc.end();
 }
 
-router.get('/branches', requireProductionOrAdmin, async (req, res, next) => {
+router.get('/branches', requireAdminOrCoAdmin, async (req, res, next) => {
   try {
     await ensureStockTables();
     const rows = await query(
@@ -554,7 +554,7 @@ router.get('/branches', requireProductionOrAdmin, async (req, res, next) => {
   }
 });
 
-router.get('/catalog/items', requireProductionOrAdmin, async (req, res, next) => {
+router.get('/catalog/items', requireAdminOrCoAdmin, async (req, res, next) => {
   try {
     await ensureStockTables();
     const search = String(req.query.search || '').trim();
@@ -896,7 +896,7 @@ router.delete('/catalog/items/:id', requireOwner, async (req, res, next) => {
   }
 });
 
-router.get('/branches/:id/movements', requireProductionOrAdmin, async (req, res, next) => {
+router.get('/branches/:id/movements', requireAdminOrCoAdmin, async (req, res, next) => {
   try {
     await ensureStockTables();
     const rows = await query(
@@ -915,7 +915,7 @@ router.get('/branches/:id/movements', requireProductionOrAdmin, async (req, res,
   }
 });
 
-router.get('/branches/:id/items', requireProductionOrAdmin, async (req, res, next) => {
+router.get('/branches/:id/items', requireAdminOrCoAdmin, async (req, res, next) => {
   try {
     await ensureStockTables();
     const rows = await query(
@@ -949,7 +949,7 @@ router.get('/branches/:id/items', requireProductionOrAdmin, async (req, res, nex
   }
 });
 
-router.get('/items/:id/movements', requireProductionOrAdmin, async (req, res, next) => {
+router.get('/items/:id/movements', requireAdminOrCoAdmin, async (req, res, next) => {
   try {
     await ensureStockTables();
     const rows = await query(
@@ -970,7 +970,7 @@ router.get('/items/:id/movements', requireProductionOrAdmin, async (req, res, ne
   }
 });
 
-router.get('/reports/full/excel', requireProductionOrAdmin, async (req, res, next) => {
+router.get('/reports/full/excel', requireAdminOrCoAdmin, async (req, res, next) => {
   try {
     await sendStockExcel(res, await stockReportRows(), 'full-stock-report');
   } catch (error) {
@@ -978,7 +978,7 @@ router.get('/reports/full/excel', requireProductionOrAdmin, async (req, res, nex
   }
 });
 
-router.get('/reports/full/pdf', requireProductionOrAdmin, async (req, res, next) => {
+router.get('/reports/full/pdf', requireAdminOrCoAdmin, async (req, res, next) => {
   try {
     const rows = await stockReportRows();
     sendStockPdf(res, { rows, title: 'Full Stock Report', filename: 'full-stock-report' });
@@ -987,7 +987,7 @@ router.get('/reports/full/pdf', requireProductionOrAdmin, async (req, res, next)
   }
 });
 
-router.get('/reports/branches/:id/excel', requireProductionOrAdmin, async (req, res, next) => {
+router.get('/reports/branches/:id/excel', requireAdminOrCoAdmin, async (req, res, next) => {
   try {
     const rows = await stockReportRows(req.params.id);
     const branchName = rows[0]?.branch_name || 'branch-stock-report';
@@ -997,7 +997,7 @@ router.get('/reports/branches/:id/excel', requireProductionOrAdmin, async (req, 
   }
 });
 
-router.get('/reports/branches/:id/pdf', requireProductionOrAdmin, async (req, res, next) => {
+router.get('/reports/branches/:id/pdf', requireAdminOrCoAdmin, async (req, res, next) => {
   try {
     const rows = await stockReportRows(req.params.id);
     const branchName = rows[0]?.branch_name || 'Branch';
