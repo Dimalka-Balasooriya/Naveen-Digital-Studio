@@ -17,6 +17,12 @@
 
 SET FOREIGN_KEY_CHECKS = 0;
 
+CREATE TABLE IF NOT EXISTS order_number_sequences (
+  order_date CHAR(8) PRIMARY KEY,
+  last_number INT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
 -- Internal messages
 DELETE FROM message_recipients;
 DELETE FROM messages;
@@ -47,6 +53,7 @@ DELETE FROM order_status_history;
 -- Orders and customers
 DELETE FROM orders;
 DELETE FROM customers;
+DELETE FROM order_number_sequences;
 
 -- Reset auto increment counters
 ALTER TABLE message_recipients AUTO_INCREMENT = 1;

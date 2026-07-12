@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Download, Edit3, History, Plus, Printer, ReceiptText, Search, Trash2 } from 'lucide-react';
 import { api } from '../../services/api';
 import Modal from '../../components/Modal';
@@ -11,6 +11,7 @@ import { titleCase } from '../../utils/statusDisplay';
 const emptyForm = {
   customer_name: '',
   customer_phone: '',
+  recipient_contact_number: '',
   customer_address: '',
   customer_notes: '',
   product_id: '',
@@ -18,6 +19,7 @@ const emptyForm = {
   facebook_page_id: '',
   courier_service_id: '',
   tracking_number: '',
+  parcel_weight: '1kg',
   status_id: '',
   assigned_employee_id: '',
   commission_amount: 0,
@@ -32,6 +34,16 @@ const emptyForm = {
   order_quantity: 1,
   total_amount: 0,
   advance_amount: 0,
+  design_notes: ''
+};
+
+const emptySubOrder = {
+  product_id: '',
+  product_name: '',
+  order_quantity: 1,
+  status_id: '',
+  assigned_employee_id: '',
+  total_amount: 0,
   design_notes: ''
 };
 
@@ -74,9 +86,33 @@ export default function OrdersPage() {
   const [savingCompletion, setSavingCompletion] = useState(false);
   const [payingCommissionId, setPayingCommissionId] = useState(null);
   const [orderPrintSize, setOrderPrintSize] = useState('A4');
+  const [subOrders, setSubOrders] = useState([]);
 
   const productionEmployees = useMemo(() => lookups.employees.filter((employee) => employee.role === 'PRODUCTION_EMPLOYEE' && employee.is_active), [lookups.employees]);
   const coAdmins = useMemo(() => lookups.employees.filter((employee) => employee.role === 'CO_ADMIN' && employee.is_active), [lookups.employees]);
+  const orderGroups = useMemo(() => {
+    const groups = new Map();
+    orders.forEach((order) => {
+      const createdDate = order.created_at ? new Date(order.created_at).toISOString().slice(0, 10) : 'unknown-date';
+      const key = `${order.customer_phone || order.customer_name}-${createdDate}`;
+      const existing = groups.get(key) || {
+        key,
+        createdDate,
+        customer_name: order.customer_name,
+        customer_phone: order.customer_phone,
+        orders: []
+      };
+      existing.orders.push(order);
+      groups.set(key, existing);
+    });
+    return Array.from(groups.values()).map((group) => ({
+      ...group,
+      total_amount: group.orders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0),
+      total_quantity: group.orders.reduce((sum, order) => sum + Number(order.order_quantity || 1), 0),
+      has_fast: group.orders.some((order) => order.is_fast),
+      has_future: group.orders.some((order) => order.is_future_order)
+    }));
+  }, [orders]);
 
   function orderFilterParams(overrides = {}) {
     const nextSearch = overrides.search ?? search;
@@ -141,6 +177,8 @@ export default function OrdersPage() {
       facebook_page_id: form.facebook_page_id ? Number(form.facebook_page_id) : null,
       courier_service_id: form.courier_service_id ? Number(form.courier_service_id) : null,
       tracking_number: form.tracking_number?.trim() || null,
+      recipient_contact_number: form.recipient_contact_number?.trim() || null,
+      parcel_weight: form.parcel_weight?.trim() || '1kg',
       status_id: Number(form.status_id),
       assigned_employee_id: form.assigned_employee_id ? Number(form.assigned_employee_id) : null,
       commission_amount: Number(form.commission_amount || 0),
@@ -185,12 +223,35 @@ export default function OrdersPage() {
           setError('Create the order first, then change status to complete to add commissions.');
           return;
         }
-        const { data } = await api.post('/orders', payload);
-        setNotice(data.message || 'Order created.');
+        const incompleteSubOrder = subOrders.find((subOrder) => !subOrder.product_id && !subOrder.product_name?.trim());
+        if (incompleteSubOrder) {
+          setError('Each sub order must have a selected product or custom product name.');
+          return;
+        }
+        const payloads = [
+          payload,
+          ...subOrders.map((subOrder) => ({
+            ...payload,
+            product_id: subOrder.product_id ? Number(subOrder.product_id) : null,
+            product_name: subOrder.product_name?.trim() || null,
+            status_id: subOrder.status_id ? Number(subOrder.status_id) : payload.status_id,
+            assigned_employee_id: subOrder.assigned_employee_id ? Number(subOrder.assigned_employee_id) : null,
+            order_quantity: Number(subOrder.order_quantity || 1),
+            total_amount: Number(subOrder.total_amount || 0),
+            design_notes: subOrder.design_notes?.trim() || payload.design_notes || null
+          }))
+        ];
+        const created = [];
+        for (const nextPayload of payloads) {
+          const { data } = await api.post('/orders', nextPayload);
+          created.push(data);
+        }
+        setNotice(created.length > 1 ? `${created.length} sub orders created for this customer.` : (created[0]?.message || 'Order created.'));
       }
       setModalOpen(false);
       setEditingOrder(null);
       setForm(emptyForm);
+      setSubOrders([]);
       await load();
     } catch (requestError) {
       setError(requestError.response?.data?.message || 'Order could not be saved.');
@@ -202,9 +263,11 @@ export default function OrdersPage() {
   async function startEdit(order) {
     await loadLookups();
     setEditingOrder(order);
+    setSubOrders([]);
     setForm({
       customer_name: order.customer_name || '',
       customer_phone: order.customer_phone || '',
+      recipient_contact_number: order.recipient_contact_number || '',
       customer_address: order.customer_address || '',
       customer_notes: '',
       product_id: order.product_id || '',
@@ -212,6 +275,7 @@ export default function OrdersPage() {
       facebook_page_id: order.facebook_page_id || '',
       courier_service_id: order.courier_service_id || '',
       tracking_number: order.tracking_number || '',
+      parcel_weight: order.parcel_weight || '1kg',
       status_id: order.status_id || '',
       assigned_employee_id: order.assigned_employee_id || '',
       commission_amount: order.current_commission_amount || 0,
@@ -235,8 +299,21 @@ export default function OrdersPage() {
     await loadLookups();
     setEditingOrder(null);
     setForm(emptyForm);
+    setSubOrders([]);
     setError('');
     setModalOpen(true);
+  }
+
+  function addSubOrder() {
+    setSubOrders([...subOrders, { ...emptySubOrder, status_id: form.status_id, assigned_employee_id: form.assigned_employee_id }]);
+  }
+
+  function updateSubOrder(index, updates) {
+    setSubOrders(subOrders.map((subOrder, subIndex) => (subIndex === index ? { ...subOrder, ...updates } : subOrder)));
+  }
+
+  function removeSubOrder(index) {
+    setSubOrders(subOrders.filter((_, subIndex) => subIndex !== index));
   }
 
   async function completeOrder({ withCommissions }) {
@@ -463,54 +540,133 @@ export default function OrdersPage() {
     return 'A4 portrait';
   }
 
+  function code128BarcodeSvg(value) {
+    const patterns = [
+      '212222', '222122', '222221', '121223', '121322', '131222', '122213', '122312', '132212', '221213',
+      '221312', '231212', '112232', '122132', '122231', '113222', '123122', '123221', '223211', '221132',
+      '221231', '213212', '223112', '312131', '311222', '321122', '321221', '312212', '322112', '322211',
+      '212123', '212321', '232121', '111323', '131123', '131321', '112313', '132113', '132311', '211313',
+      '231113', '231311', '112133', '112331', '132131', '113123', '113321', '133121', '313121', '211331',
+      '231131', '213113', '213311', '213131', '311123', '311321', '331121', '312113', '312311', '332111',
+      '314111', '221411', '431111', '111224', '111422', '121124', '121421', '141122', '141221', '112214',
+      '112412', '122114', '122411', '142112', '142211', '241211', '221114', '413111', '241112', '134111',
+      '111242', '121142', '121241', '114212', '124112', '124211', '411212', '421112', '421211', '212141',
+      '214121', '412121', '111143', '111341', '131141', '114113', '114311', '411113', '411311', '113141',
+      '114131', '311141', '411131', '211412', '211214', '211232', '2331112'
+    ];
+    const raw = String(value || '').trim() || 'NDS';
+    const safeValue = raw.replace(/[^\x20-\x7F]/g, '').slice(0, 48) || 'NDS';
+    const codes = [104, ...safeValue.split('').map((char) => char.charCodeAt(0) - 32)];
+    let checksum = 104;
+    for (let index = 1; index < codes.length; index += 1) checksum += codes[index] * index;
+    codes.push(checksum % 103, 106);
+
+    const moduleWidth = 2;
+    const barHeight = 68;
+    const quiet = 18;
+    let x = quiet;
+    const rects = [];
+    codes.forEach((code) => {
+      const pattern = patterns[code];
+      for (let i = 0; i < pattern.length; i += 1) {
+        const width = Number(pattern[i]) * moduleWidth;
+        if (i % 2 === 0) rects.push(`<rect x="${x}" y="0" width="${width}" height="${barHeight}" fill="#000"/>`);
+        x += width;
+      }
+    });
+    const svgWidth = x + quiet;
+    return `
+      <svg class="barcode" viewBox="0 0 ${svgWidth} 92" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Code 128 barcode ${escapeHtml(safeValue)}">
+        <rect width="${svgWidth}" height="92" fill="#fff"/>
+        ${rects.join('')}
+        <text x="${svgWidth / 2}" y="88" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="700">${escapeHtml(safeValue)}</text>
+      </svg>
+    `;
+  }
+
   function orderPrintHtml() {
     const productName = form.product_name?.trim() || selectedLookupName(lookups.products, form.product_id, 'Custom product');
-    const facebookPageName = selectedLookupName(lookups.pages, form.facebook_page_id, 'None');
     const courierName = selectedLookupName(lookups.couriers, form.courier_service_id, 'Not selected');
-    const statusName = titleCase(selectedLookupName(lookups.statuses, form.status_id, 'Not selected'));
-    const assignedEmployee = selectedLookupName(productionEmployees, form.assigned_employee_id, 'Unassigned');
-    const coAdminName = selectedLookupName(coAdmins, form.co_admin_id, 'Order creator / logged-in CO_ADMIN');
     const printSize = orderPrintPageSize(orderPrintSize);
     const isReceipt = orderPrintSize === '80MM';
+    const waybillId = (form.tracking_number || editingOrder?.order_number || 'NDS-LABEL').trim();
+    const totalAmount = Number(form.total_amount || 0);
+    const advanceAmount = Number(form.advance_amount || 0);
+    const codAmount = Math.max(totalAmount - advanceAmount, 0);
+    const pickupPhone = '0779736393';
+    const pickupAddress = 'New bus stand, Galgamuwa';
+    const recipientContact = form.recipient_contact_number?.trim() || form.customer_phone || '-';
+    const parcelWeight = form.parcel_weight?.trim() || '1kg';
+    const barcodeSvg = code128BarcodeSvg(waybillId);
 
     return `<!doctype html>
       <html>
         <head>
-          <title>Order Print ${escapeHtml(editingOrder?.order_number || 'Draft')}</title>
+          <title>Special Bill ${escapeHtml(waybillId)}</title>
           <style>
-            @page { size: ${printSize}; margin: ${isReceipt ? '6mm' : '12mm'}; }
+            @page { size: ${printSize}; margin: ${isReceipt ? '4mm' : '10mm'}; }
             * { box-sizing: border-box; }
             body {
               margin: 0;
-              font-family: Arial, sans-serif;
-              color: #0f172a;
+              font-family: Georgia, 'Times New Roman', serif;
+              color: #111;
               background: #fff;
-              font-size: ${isReceipt ? '11px' : '13px'};
+              font-size: ${isReceipt ? '12px' : '17px'};
             }
-            .sheet { width: 100%; }
+            .sheet {
+              width: ${isReceipt ? '72mm' : '148mm'};
+              max-width: 100%;
+              border: 1px solid #888;
+              margin: 0 auto;
+              background: #fff;
+            }
             .header {
               display: flex;
+              align-items: center;
               justify-content: space-between;
-              gap: 14px;
-              border-bottom: 2px solid #0f766e;
-              padding-bottom: ${isReceipt ? '8px' : '14px'};
-              margin-bottom: ${isReceipt ? '10px' : '16px'};
+              gap: 12px;
+              border-bottom: 1px solid #aaa;
+              padding: ${isReceipt ? '8px' : '12px'} ${isReceipt ? '8px' : '16px'};
             }
             .brand { display: flex; align-items: center; gap: 10px; }
-            .logo { width: ${isReceipt ? '38px' : '56px'}; height: ${isReceipt ? '38px' : '56px'}; object-fit: contain; border-radius: 999px; border: 1px solid #dbeafe; }
-            .eyebrow { margin: 0; font-size: ${isReceipt ? '8px' : '10px'}; letter-spacing: 0.22em; color: #0f766e; font-weight: 700; text-transform: uppercase; }
-            h1 { margin: 3px 0 0; font-size: ${isReceipt ? '15px' : '24px'}; }
-            h2 { margin: 0 0 8px; font-size: ${isReceipt ? '12px' : '15px'}; }
-            .meta { text-align: right; font-size: ${isReceipt ? '9px' : '12px'}; color: #475569; }
-            .grid { display: grid; grid-template-columns: ${isReceipt ? '1fr' : '1fr 1fr'}; gap: 10px; }
-            .box { border: 1px solid #cbd5e1; border-radius: 8px; padding: ${isReceipt ? '8px' : '12px'}; break-inside: avoid; }
-            .row { display: grid; grid-template-columns: 42% 58%; gap: 8px; padding: 5px 0; border-bottom: 1px solid #e2e8f0; }
-            .row:last-child { border-bottom: 0; }
-            .label { color: #64748b; font-weight: 700; }
-            .value { color: #0f172a; font-weight: 600; overflow-wrap: anywhere; }
-            .notes { white-space: pre-wrap; overflow-wrap: anywhere; }
-            .totals { margin-top: 12px; border: 1px solid #99f6e4; background: #f0fdfa; border-radius: 8px; padding: ${isReceipt ? '8px' : '12px'}; }
-            .footer { margin-top: 14px; padding-top: 8px; border-top: 1px solid #cbd5e1; color: #64748b; font-size: ${isReceipt ? '9px' : '11px'}; text-align: center; }
+            .logo { width: ${isReceipt ? '64px' : '130px'}; height: auto; object-fit: contain; }
+            .waybill { min-width: ${isReceipt ? '0' : '190px'}; font-size: ${isReceipt ? '14px' : '20px'}; font-weight: 700; line-height: 1.25; }
+            .section {
+              border-bottom: 1px solid #aaa;
+              padding: ${isReceipt ? '10px 8px' : '18px 28px'};
+              break-inside: avoid;
+            }
+            .section h2 {
+              margin: 0 0 ${isReceipt ? '8px' : '16px'};
+              font-size: ${isReceipt ? '16px' : '22px'};
+            }
+            .line {
+              margin: 2px 0;
+              font-size: ${isReceipt ? '14px' : '21px'};
+              line-height: 1.12;
+              overflow-wrap: anywhere;
+            }
+            .strong { font-weight: 700; }
+            .cod {
+              padding: ${isReceipt ? '12px 8px 8px' : '24px 28px 12px'};
+              text-align: center;
+              font-size: ${isReceipt ? '18px' : '23px'};
+              font-weight: 800;
+              letter-spacing: 0;
+            }
+            .barcode-wrap {
+              display: flex;
+              justify-content: center;
+              padding: ${isReceipt ? '4px 8px 12px' : '6px 28px 22px'};
+            }
+            .barcode { width: ${isReceipt ? '58mm' : '82mm'}; height: auto; display: block; }
+            .footer {
+              padding: 8px;
+              color: #555;
+              font-size: ${isReceipt ? '10px' : '12px'};
+              text-align: center;
+              border-top: 1px solid #ddd;
+            }
             @media print { .no-print { display: none !important; } }
           </style>
         </head>
@@ -519,57 +675,34 @@ export default function OrdersPage() {
             <section class="header">
               <div class="brand">
                 <img class="logo" src="/naveen-digital-studio-logo.jpeg" />
-                <div>
-                  <p class="eyebrow">Naveen Digital Studio</p>
-                  <h1>Order Details</h1>
-                </div>
               </div>
-              <div class="meta">
-                <div><strong>${escapeHtml(editingOrder?.order_number || 'Draft Order')}</strong></div>
-                <div>${escapeHtml(new Date().toLocaleString())}</div>
-                <div>Print Size: ${escapeHtml(orderPrintSize)}</div>
+              <div class="waybill">
+                <div>Waybill ID :</div>
+                <div>${escapeHtml(waybillId)}</div>
               </div>
             </section>
 
-            <section class="grid">
-              <div class="box">
-                <h2>Customer</h2>
-                <div class="row"><div class="label">Name</div><div class="value">${escapeHtml(form.customer_name || '-')}</div></div>
-                <div class="row"><div class="label">Phone</div><div class="value">${escapeHtml(form.customer_phone || '-')}</div></div>
-                <div class="row"><div class="label">Address</div><div class="value">${escapeHtml(form.customer_address || '-')}</div></div>
-                <div class="row"><div class="label">Needed</div><div class="value">${escapeHtml(form.needed_date || '-')}</div></div>
-                <div class="row"><div class="label">Future</div><div class="value">${form.is_future_order ? 'Yes' : 'No'}</div></div>
-                ${form.is_future_order ? `<div class="row"><div class="label">Future Date</div><div class="value">${escapeHtml(form.future_needed_date || form.needed_date || '-')}</div></div>` : ''}
-              </div>
-
-              <div class="box">
-                <h2>Order</h2>
-                <div class="row"><div class="label">Product</div><div class="value">${escapeHtml(productName)}</div></div>
-                <div class="row"><div class="label">Quantity</div><div class="value">${escapeHtml(form.order_quantity || 1)}</div></div>
-                <div class="row"><div class="label">Status</div><div class="value">${escapeHtml(statusName)}</div></div>
-                <div class="row"><div class="label">Fast</div><div class="value">${form.is_fast ? 'Yes' : 'No'}</div></div>
-              </div>
-
-              <div class="box">
-                <h2>Assignment</h2>
-                <div class="row"><div class="label">Employee</div><div class="value">${escapeHtml(assignedEmployee)}</div></div>
-                <div class="row"><div class="label">CO_ADMIN</div><div class="value">${escapeHtml(coAdminName)}</div></div>
-                <div class="row"><div class="label">Facebook</div><div class="value">${escapeHtml(facebookPageName)}</div></div>
-                <div class="row"><div class="label">Courier</div><div class="value">${escapeHtml(courierName)}</div></div>
-                <div class="row"><div class="label">Tracking</div><div class="value">${escapeHtml(form.tracking_number || '-')}</div></div>
-              </div>
-
-              <div class="box">
-                <h2>Amount</h2>
-                <div class="row"><div class="label">Total</div><div class="value">Rs. ${Number(form.total_amount || 0).toLocaleString()}</div></div>
-                <div class="row"><div class="label">Advance</div><div class="value">Rs. ${Number(form.advance_amount || 0).toLocaleString()}</div></div>
-                <div class="row"><div class="label">Balance</div><div class="value">Rs. ${Math.max(Number(form.total_amount || 0) - Number(form.advance_amount || 0), 0).toLocaleString()}</div></div>
-              </div>
+            <section class="section">
+              <h2>Recipient Details</h2>
+              <p class="line">Name: ${escapeHtml(form.customer_name || '-')}</p>
+              <p class="line">Address: ${escapeHtml(form.customer_address || '-')}</p>
+              <p class="line">Contact No: ${escapeHtml(recipientContact)}</p>
             </section>
 
-            ${form.design_notes ? `<section class="box" style="margin-top:10px;"><h2>Design Notes</h2><div class="notes">${escapeHtml(form.design_notes)}</div></section>` : ''}
-            ${form.is_future_order && form.future_note ? `<section class="box" style="margin-top:10px;"><h2>Future Order Note</h2><div class="notes">${escapeHtml(form.future_note)}</div></section>` : ''}
-            <div class="footer">Copyright ${new Date().getFullYear()} Naveen Digital Studio. All rights reserved.</div>
+            <section class="section">
+              <h2>Pickup Details</h2>
+              <p class="line">Name: <span class="strong">NAVEEN DIGITAL STUDIO</span></p>
+              <p class="line">Address: ${escapeHtml(pickupAddress)}</p>
+              <p class="line">Contact No: ${escapeHtml(pickupPhone)}</p>
+              <p class="line">Weight: ${escapeHtml(parcelWeight)}</p>
+              <p class="line">Order ID: ${escapeHtml(editingOrder?.order_number || '-')}</p>
+              <p class="line">Courier: ${escapeHtml(courierName)}</p>
+              <p class="line">Parcel Desc: ${escapeHtml(productName)} x ${escapeHtml(form.order_quantity || 1)}</p>
+            </section>
+
+            <div class="cod">COD : ${codAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} LKR</div>
+            <div class="barcode-wrap">${barcodeSvg}</div>
+            <div class="footer">Generated ${escapeHtml(new Date().toLocaleString())} · Naveen Digital Studio</div>
           </main>
         </body>
       </html>`;
@@ -776,36 +909,63 @@ export default function OrdersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {orders.map((order) => (
-                <tr key={order.id} onClick={() => showDetails(order)} className={`${order.is_fast ? 'bg-orange-50/70' : order.is_future_order ? 'bg-sky-50/70' : 'bg-white'} cursor-pointer hover:bg-slate-50`}>
-                  <td className="px-4 py-3 font-semibold text-slate-950">
-                    {order.order_number}
-                    {order.is_fast ? <span className="ml-2 rounded bg-orange-100 px-2 py-0.5 text-xs text-orange-700">Fast</span> : null}
-                    {order.is_future_order ? <span className="ml-2 rounded bg-sky-100 px-2 py-0.5 text-xs text-sky-700">Future</span> : null}
-                  </td>
-                  <td className="px-4 py-3">
-                    <p className="font-medium text-slate-900">{order.customer_name}</p>
-                    <p className="text-xs text-slate-500">{order.customer_phone}</p>
-                  </td>
-                  <td className="px-4 py-3">{order.product_name}</td>
-                  <td className="px-4 py-3 font-semibold">{order.order_quantity || 1}</td>
-                  <td className="px-4 py-3"><StatusBadge color={order.status_color}>{order.status_name}</StatusBadge></td>
-                  <td className="px-4 py-3">{order.assigned_employee_name || 'Unassigned'}</td>
-                  <td className="px-4 py-3">
-                    <p className="font-medium text-slate-900">{order.courier_service_name || 'Not selected'}</p>
-                    <p className="text-xs text-slate-500">{order.tracking_number || 'No tracking number'}</p>
-                  </td>
-                  <td className="px-4 py-3">{order.needed_date?.slice(0, 10)}</td>
-                  <td className="px-4 py-3">Rs. {Number(order.total_amount).toLocaleString()}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end gap-2">
-                      <button onClick={(event) => { event.stopPropagation(); startEdit(order); }} className="rounded-md p-2 text-slate-600 hover:bg-slate-100" title="Edit order"><Edit3 size={17} /></button>
-                      <button onClick={(event) => { event.stopPropagation(); showDetails(order); }} className="rounded-md p-2 text-teal-700 hover:bg-teal-50" title="Status history"><History size={17} /></button>
-                      <button onClick={(event) => { event.stopPropagation(); openBillModal(order); }} className="rounded-md p-2 text-emerald-700 hover:bg-emerald-50" title="Generate bill"><ReceiptText size={17} /></button>
-                      <button onClick={(event) => { event.stopPropagation(); removeOrder(order.id); }} className="rounded-md p-2 text-rose-600 hover:bg-rose-50" title="Remove order from active list"><Trash2 size={17} /></button>
-                    </div>
-                  </td>
-                </tr>
+              {orderGroups.map((group) => (
+                <Fragment key={group.key}>
+                  {group.orders.length > 1 ? (
+                    <tr className="border-t border-teal-100 bg-teal-50/80">
+                      <td className="px-4 py-3 font-semibold text-teal-950">
+                        Customer Batch
+                        <span className="ml-2 rounded bg-white px-2 py-0.5 text-xs text-teal-700">{group.orders.length} sub orders</span>
+                        {group.has_fast ? <span className="ml-2 rounded bg-orange-100 px-2 py-0.5 text-xs text-orange-700">Fast</span> : null}
+                        {group.has_future ? <span className="ml-2 rounded bg-sky-100 px-2 py-0.5 text-xs text-sky-700">Future</span> : null}
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-teal-950">{group.customer_name}</p>
+                        <p className="text-xs text-teal-700">{group.customer_phone}</p>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-teal-800">{group.orders.map((order) => order.product_name).join(', ')}</td>
+                      <td className="px-4 py-3 font-semibold text-teal-950">{group.total_quantity}</td>
+                      <td className="px-4 py-3 text-sm text-teal-700">Multiple statuses</td>
+                      <td className="px-4 py-3 text-sm text-teal-700">Sub assignees</td>
+                      <td className="px-4 py-3 text-sm text-teal-700">Sub tracking</td>
+                      <td className="px-4 py-3">{group.createdDate}</td>
+                      <td className="px-4 py-3 font-semibold text-teal-950">Rs. {group.total_amount.toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-teal-700">Open sub rows</td>
+                    </tr>
+                  ) : null}
+                  {group.orders.map((order, index) => (
+                    <tr key={order.id} onClick={() => showDetails(order)} className={`${order.is_fast ? 'bg-orange-50/70' : order.is_future_order ? 'bg-sky-50/70' : 'bg-white'} cursor-pointer hover:bg-slate-50 ${group.orders.length > 1 ? 'border-l-4 border-l-teal-300' : ''}`}>
+                      <td className="px-4 py-3 font-semibold text-slate-950">
+                        {group.orders.length > 1 ? <span className="mr-2 rounded bg-teal-100 px-2 py-0.5 text-xs text-teal-700">Sub {index + 1}</span> : null}
+                        {order.order_number}
+                        {order.is_fast ? <span className="ml-2 rounded bg-orange-100 px-2 py-0.5 text-xs text-orange-700">Fast</span> : null}
+                        {order.is_future_order ? <span className="ml-2 rounded bg-sky-100 px-2 py-0.5 text-xs text-sky-700">Future</span> : null}
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-slate-900">{order.customer_name}</p>
+                        <p className="text-xs text-slate-500">{order.customer_phone}</p>
+                      </td>
+                      <td className="px-4 py-3">{order.product_name}</td>
+                      <td className="px-4 py-3 font-semibold">{order.order_quantity || 1}</td>
+                      <td className="px-4 py-3"><StatusBadge color={order.status_color}>{order.status_name}</StatusBadge></td>
+                      <td className="px-4 py-3">{order.assigned_employee_name || 'Unassigned'}</td>
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-slate-900">{order.courier_service_name || 'Not selected'}</p>
+                        <p className="text-xs text-slate-500">{order.tracking_number || 'No tracking number'}</p>
+                      </td>
+                      <td className="px-4 py-3">{order.needed_date?.slice(0, 10)}</td>
+                      <td className="px-4 py-3">Rs. {Number(order.total_amount).toLocaleString()}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex justify-end gap-2">
+                          <button onClick={(event) => { event.stopPropagation(); startEdit(order); }} className="rounded-md p-2 text-slate-600 hover:bg-slate-100" title="Edit this sub order"><Edit3 size={17} /></button>
+                          <button onClick={(event) => { event.stopPropagation(); showDetails(order); }} className="rounded-md p-2 text-teal-700 hover:bg-teal-50" title="Status history"><History size={17} /></button>
+                          <button onClick={(event) => { event.stopPropagation(); openBillModal(order); }} className="rounded-md p-2 text-emerald-700 hover:bg-emerald-50" title="Generate bill"><ReceiptText size={17} /></button>
+                          <button onClick={(event) => { event.stopPropagation(); removeOrder(order.id); }} className="rounded-md p-2 text-rose-600 hover:bg-rose-50" title="Remove order from active list"><Trash2 size={17} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </Fragment>
               ))}
               {!orders.length ? (
                 <tr>
@@ -823,7 +983,8 @@ export default function OrdersPage() {
         <form onSubmit={submit} className="grid gap-4 sm:grid-cols-2">
           {error ? <div className="sm:col-span-2 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div> : null}
           <Field label="Customer name"><input className={inputClass} value={form.customer_name} onChange={(event) => setForm({ ...form, customer_name: event.target.value })} required /></Field>
-          <Field label="Phone number"><input className={inputClass} value={form.customer_phone} onChange={(event) => setForm({ ...form, customer_phone: event.target.value })} required /></Field>
+          <Field label="WhatsApp / customer phone"><input className={inputClass} value={form.customer_phone} onChange={(event) => setForm({ ...form, customer_phone: event.target.value })} required /></Field>
+          <Field label="Recipient contact number"><input className={inputClass} value={form.recipient_contact_number} onChange={(event) => setForm({ ...form, recipient_contact_number: event.target.value })} placeholder="Contact number for printed bill" /></Field>
           <Field label="Address"><input className={inputClass} value={form.customer_address} onChange={(event) => setForm({ ...form, customer_address: event.target.value })} /></Field>
           <Field label="Needed date"><input type="date" className={inputClass} value={form.needed_date} onChange={(event) => setForm({ ...form, needed_date: event.target.value })} required /></Field>
           <Field label="Product"><select className={inputClass} value={form.product_id} onChange={(event) => setForm({ ...form, product_id: event.target.value, product_name: event.target.value ? '' : form.product_name })}><option value="">Select or type custom</option>{lookups.products.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
@@ -831,6 +992,15 @@ export default function OrdersPage() {
           <Field label="Facebook page"><select className={inputClass} value={form.facebook_page_id} onChange={(event) => setForm({ ...form, facebook_page_id: event.target.value })}><option value="">None</option>{lookups.pages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
           <Field label="Courier service"><select className={inputClass} value={form.courier_service_id} onChange={(event) => setForm({ ...form, courier_service_id: event.target.value })}><option value="">Not selected</option>{lookups.couriers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
           <Field label="Tracking number"><input className={inputClass} value={form.tracking_number} onChange={(event) => setForm({ ...form, tracking_number: event.target.value })} placeholder="Add anytime" /></Field>
+          <Field label="Parcel weight">
+            <select className={inputClass} value={form.parcel_weight} onChange={(event) => setForm({ ...form, parcel_weight: event.target.value })}>
+              <option value="1kg">1kg</option>
+              <option value="2kg">2kg</option>
+              <option value="3kg">3kg</option>
+              <option value="4kg">4kg</option>
+              <option value="5kg">5kg</option>
+            </select>
+          </Field>
           <Field label="Status"><select className={inputClass} value={form.status_id} onChange={(event) => setForm({ ...form, status_id: event.target.value })} required><option value="">Select</option>{lookups.statuses.map((item) => <option key={item.id} value={item.id}>{titleCase(item.name)}</option>)}</select></Field>
           <Field label="Assigned employee"><select className={inputClass} value={form.assigned_employee_id} onChange={(event) => setForm({ ...form, assigned_employee_id: event.target.value })}><option value="">Unassigned</option>{productionEmployees.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
           <Field label="CO_ADMIN for completion commission"><select className={inputClass} value={form.co_admin_id} onChange={(event) => setForm({ ...form, co_admin_id: event.target.value })}><option value="">Order creator / logged-in CO_ADMIN</option>{coAdmins.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
@@ -863,6 +1033,78 @@ export default function OrdersPage() {
               </div>
             </>
           ) : null}
+          {!editingOrder ? (
+            <div className="sm:col-span-2 rounded-md border border-teal-100 bg-teal-50/60 p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h4 className="font-semibold text-slate-950">Sub orders for same customer</h4>
+                  <p className="text-sm text-slate-600">Add more products under this customer. Each sub order can later have its own status and assignee.</p>
+                </div>
+                <button type="button" onClick={addSubOrder} className="rounded-md border border-teal-300 bg-white px-3 py-2 text-sm font-semibold text-teal-800 hover:bg-teal-50">
+                  Add Sub Order
+                </button>
+              </div>
+              {subOrders.length ? (
+                <div className="mt-4 space-y-3">
+                  {subOrders.map((subOrder, index) => (
+                    <div key={index} className="grid gap-3 rounded-md border border-teal-100 bg-white p-3 md:grid-cols-6">
+                      <div className="md:col-span-2">
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Product</label>
+                        <select
+                          className={`${inputClass} mt-1`}
+                          value={subOrder.product_id}
+                          onChange={(event) => updateSubOrder(index, { product_id: event.target.value, product_name: event.target.value ? '' : subOrder.product_name })}
+                        >
+                          <option value="">Select or custom</option>
+                          {lookups.products.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Custom product</label>
+                        <input
+                          className={`${inputClass} mt-1`}
+                          value={subOrder.product_name}
+                          onChange={(event) => updateSubOrder(index, { product_name: event.target.value, product_id: event.target.value ? '' : subOrder.product_id })}
+                          placeholder="Type product"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Qty</label>
+                        <input type="number" min="1" className={`${inputClass} mt-1`} value={subOrder.order_quantity} onChange={(event) => updateSubOrder(index, { order_quantity: event.target.value })} />
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Amount</label>
+                        <input type="number" min="0" className={`${inputClass} mt-1`} value={subOrder.total_amount} onChange={(event) => updateSubOrder(index, { total_amount: event.target.value })} />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Status</label>
+                        <select className={`${inputClass} mt-1`} value={subOrder.status_id} onChange={(event) => updateSubOrder(index, { status_id: event.target.value })}>
+                          <option value="">Use main status</option>
+                          {lookups.statuses.map((item) => <option key={item.id} value={item.id}>{titleCase(item.name)}</option>)}
+                        </select>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Assignee</label>
+                        <select className={`${inputClass} mt-1`} value={subOrder.assigned_employee_id} onChange={(event) => updateSubOrder(index, { assigned_employee_id: event.target.value })}>
+                          <option value="">Unassigned</option>
+                          {productionEmployees.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Notes</label>
+                        <input className={`${inputClass} mt-1`} value={subOrder.design_notes} onChange={(event) => updateSubOrder(index, { design_notes: event.target.value })} placeholder="Sub order note" />
+                      </div>
+                      <div className="flex items-end justify-end">
+                        <button type="button" onClick={() => removeSubOrder(index)} className="rounded-md border border-rose-200 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50">
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <div className="sm:col-span-2"><Field label="Design notes"><textarea className={inputClass} rows="3" value={form.design_notes} onChange={(event) => setForm({ ...form, design_notes: event.target.value })} /></Field></div>
           <div className="sm:col-span-2 flex flex-col gap-3 border-t border-slate-200 pt-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -884,7 +1126,7 @@ export default function OrdersPage() {
                 className="flex items-center justify-center gap-2 rounded-md border border-teal-300 bg-teal-50 px-4 py-2 text-sm font-semibold text-teal-800 hover:bg-teal-100"
               >
                 <Printer size={16} />
-                Print Details
+                Print Special Bill
               </button>
             </div>
             <div className="flex justify-end gap-2">

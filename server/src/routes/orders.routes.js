@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { pool, query } from '../config/db.js';
 import { authenticate, requireRole } from '../middleware/auth.js';
-import { createOrderNumber, ensureOrderTasks } from '../utils/orders.js';
+import { createOrderNumber, ensureOrderNumberSequenceSupport, ensureOrderTasks } from '../utils/orders.js';
 import {
   applyOrderStatusWorkflow,
   cancelOrderCommissions,
@@ -19,6 +19,7 @@ const router = Router();
 const orderSchema = z.object({
   customer_name: z.string().min(2),
   customer_phone: z.string().min(6),
+  recipient_contact_number: z.string().max(30).optional().nullable(),
   customer_address: z.string().optional().nullable(),
   customer_notes: z.string().optional().nullable(),
   product_id: z.number().int().positive().optional().nullable(),
@@ -27,6 +28,7 @@ const orderSchema = z.object({
   facebook_page_id: z.number().int().positive().optional().nullable(),
   courier_service_id: z.number().int().positive().optional().nullable(),
   tracking_number: z.string().max(120).optional().nullable(),
+  parcel_weight: z.string().max(40).optional().nullable(),
   status_id: z.number().int().positive(),
   assigned_employee_id: z.number().int().positive().optional().nullable(),
   commission_amount: z.number().nonnegative().optional(),
@@ -117,7 +119,8 @@ async function ensureOrderArchiveSupport({ connection = null } = {}) {
        AND TABLE_NAME = 'orders'
        AND COLUMN_NAME IN (
         'deleted_at', 'deleted_by', 'is_deleted', 'archived_from_active_list',
-        'assigned_co_admin_id', 'courier_service_id', 'tracking_number',
+       'assigned_co_admin_id', 'courier_service_id', 'tracking_number',
+        'recipient_contact_number', 'parcel_weight',
         'is_future_order', 'future_needed_date', 'future_note'
        )`
   );
@@ -142,6 +145,12 @@ async function ensureOrderArchiveSupport({ connection = null } = {}) {
   }
   if (!existing.has('tracking_number')) {
     await runner('ALTER TABLE orders ADD COLUMN tracking_number VARCHAR(120) NULL AFTER courier_service_id');
+  }
+  if (!existing.has('recipient_contact_number')) {
+    await runner('ALTER TABLE orders ADD COLUMN recipient_contact_number VARCHAR(30) NULL AFTER tracking_number');
+  }
+  if (!existing.has('parcel_weight')) {
+    await runner("ALTER TABLE orders ADD COLUMN parcel_weight VARCHAR(40) NULL DEFAULT '1kg' AFTER recipient_contact_number");
   }
   if (!existing.has('is_future_order')) {
     await runner('ALTER TABLE orders ADD COLUMN is_future_order BOOLEAN NOT NULL DEFAULT FALSE AFTER is_fast');
@@ -271,10 +280,10 @@ async function insertOrderWithUniqueNumber({ connection, body, customerId, produ
     try {
       const [orderResult] = await connection.execute(
         `INSERT INTO orders (
-          order_number, customer_id, product_id, facebook_page_id, courier_service_id, tracking_number, status_id, assigned_employee_id, assigned_co_admin_id,
+          order_number, customer_id, product_id, facebook_page_id, courier_service_id, tracking_number, recipient_contact_number, parcel_weight, status_id, assigned_employee_id, assigned_co_admin_id,
           needed_date, is_fast, is_future_order, future_needed_date, future_note,
           quantity, order_quantity, total_amount, advance_amount, design_notes, return_reason, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           orderNumber,
           customerId,
@@ -282,6 +291,8 @@ async function insertOrderWithUniqueNumber({ connection, body, customerId, produ
           body.facebook_page_id || null,
           body.courier_service_id || null,
           body.tracking_number || null,
+          body.recipient_contact_number || null,
+          body.parcel_weight || '1kg',
           body.status_id,
           body.assigned_employee_id || null,
           body.co_admin_id || null,
@@ -527,6 +538,7 @@ router.post('/', authenticate, requireRole('admin'), async (req, res, next) => {
   const connection = await pool.getConnection();
   try {
     const body = orderSchema.parse(req.body);
+    await ensureOrderNumberSequenceSupport();
     await connection.beginTransaction();
     await ensureOrderArchiveSupport({ connection });
 
@@ -833,7 +845,8 @@ router.put('/:id', authenticate, requireRole('admin'), async (req, res, next) =>
     }
 
     const allowed = [
-      'product_id', 'facebook_page_id', 'courier_service_id', 'tracking_number', 'status_id',
+      'product_id', 'facebook_page_id', 'courier_service_id', 'tracking_number',
+      'recipient_contact_number', 'parcel_weight', 'status_id',
       'assigned_employee_id', 'assigned_co_admin_id', 'needed_date', 'is_fast', 'is_future_order',
       'future_needed_date', 'future_note', 'quantity', 'order_quantity', 'total_amount',
       'advance_amount', 'design_notes', 'return_reason'
