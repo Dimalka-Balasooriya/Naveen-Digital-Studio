@@ -11,10 +11,11 @@ router.use(authenticate);
 router.get('/', requireRole('admin', 'production'), async (req, res, next) => {
   try {
     const params = {};
-    const filter = req.user.role === 'PRODUCTION_EMPLOYEE'
+    const isWorker = ['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'].includes(String(req.user.role || '').toUpperCase());
+    const filter = isWorker
       ? 'WHERE c.employee_id = :employeeId AND r.name <> \'OWNER\' AND e.deleted_at IS NULL'
       : 'WHERE r.name <> \'OWNER\' AND e.deleted_at IS NULL';
-    if (req.user.role === 'PRODUCTION_EMPLOYEE') params.employeeId = req.user.id;
+    if (isWorker) params.employeeId = req.user.id;
 
     const rows = await query(
       `SELECT c.*, e.name AS employee_name, o.order_number, s.name AS status_name
@@ -158,7 +159,7 @@ router.get('/overview', requireRole('admin', 'production'), async (req, res, nex
        LEFT JOIN commissions c ON c.employee_id = e.id ${commissionJoinDateFilter}
        LEFT JOIN orders o ON o.id = c.order_id
        LEFT JOIN order_statuses s ON s.id = o.status_id
-       WHERE r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE')
+       WHERE r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM')
          AND e.deleted_at IS NULL
          ${employeeFilter}
          ${roleFilter}
@@ -176,7 +177,7 @@ router.get('/overview', requireRole('admin', 'production'), async (req, res, nex
        JOIN roles r ON r.id = e.role_id
        JOIN orders o ON o.id = c.order_id
        JOIN order_statuses s ON s.id = o.status_id
-       WHERE r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE')
+       WHERE r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM')
          AND e.deleted_at IS NULL
          ${employeeFilter}
          ${roleFilter}

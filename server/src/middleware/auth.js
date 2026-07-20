@@ -5,15 +5,17 @@ export function normalizeRole(role) {
   const value = String(role || '').toUpperCase();
   if (value === 'ADMIN') return 'OWNER';
   if (value === 'PRODUCTION') return 'PRODUCTION_EMPLOYEE';
+  if (value === 'DESIGN') return 'DESIGN_TEAM';
   return value;
 }
 
 const roleAliases = {
   admin: ['OWNER', 'CO_ADMIN'],
-  production: ['PRODUCTION_EMPLOYEE'],
+  production: ['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'],
   OWNER: ['OWNER'],
   CO_ADMIN: ['CO_ADMIN'],
-  PRODUCTION_EMPLOYEE: ['PRODUCTION_EMPLOYEE']
+  PRODUCTION_EMPLOYEE: ['PRODUCTION_EMPLOYEE'],
+  DESIGN_TEAM: ['DESIGN_TEAM']
 };
 
 function expandRoles(roles) {
@@ -61,4 +63,4 @@ export function requireRole(...roles) {
 
 export const requireOwner = requireRole('OWNER');
 export const requireAdminOrCoAdmin = requireRole('OWNER', 'CO_ADMIN');
-export const requireProductionOrAdmin = requireRole('OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE');
+export const requireProductionOrAdmin = requireRole('OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM');

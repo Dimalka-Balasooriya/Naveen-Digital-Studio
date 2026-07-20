@@ -75,7 +75,7 @@ export default function DashboardLayout() {
   }, [user?.role]);
 
   useEffect(() => {
-    if (!['CO_ADMIN', 'PRODUCTION_EMPLOYEE'].includes(String(user?.role || '').toUpperCase())) return undefined;
+    if (!['CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'].includes(String(user?.role || '').toUpperCase())) return undefined;
 
     const remindLogout = (event) => {
       event.preventDefault();

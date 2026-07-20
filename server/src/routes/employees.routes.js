@@ -11,10 +11,18 @@ const employeeSchema = z.object({
   email: z.string().email(),
   phone: z.string().optional().nullable(),
   address: z.string().optional().nullable(),
-  role: z.enum(['OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'admin', 'production']),
+  role: z.enum(['OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM', 'admin', 'production', 'design']),
   password: z.string().min(6).optional(),
   is_active: z.boolean().optional()
 });
+
+function normalizeEmployeeRoleInput(role) {
+  const value = String(role || '').toUpperCase();
+  if (value === 'DESIGN') return 'DESIGN_TEAM';
+  if (value === 'PRODUCTION') return 'PRODUCTION_EMPLOYEE';
+  if (value === 'ADMIN') return 'OWNER';
+  return value;
+}
 
 let hasCheckedEmployeeColumns = false;
 
@@ -44,6 +52,8 @@ async function ensureEmployeeColumns() {
   if (!Number(addressRows[0]?.column_count || 0)) {
     await query('ALTER TABLE employees ADD COLUMN address TEXT NULL AFTER phone');
   }
+
+  await query("INSERT IGNORE INTO roles (name) VALUES ('DESIGN_TEAM')");
 
   hasCheckedEmployeeColumns = true;
 }
@@ -76,7 +86,8 @@ router.post('/', authenticate, requireAdminOrCoAdmin, async (req, res, next) => 
     if (body.role === 'OWNER') {
       return res.status(403).json({ message: 'The owner account is managed separately.' });
     }
-    const roles = await query('SELECT id FROM roles WHERE name = :role', { role: body.role });
+    const selectedRole = normalizeEmployeeRoleInput(body.role);
+    const roles = await query('SELECT id FROM roles WHERE name = :role', { role: selectedRole });
     if (!roles.length) return res.status(400).json({ message: 'Selected role is not available in the database.' });
     const password_hash = await bcrypt.hash(body.password, 10);
     const existingEmail = await query(
@@ -164,7 +175,8 @@ router.put('/:id', authenticate, requireAdminOrCoAdmin, async (req, res, next) =
     delete updates.password;
 
     if (body.role) {
-      const roles = await query('SELECT id FROM roles WHERE name = :role', { role: body.role });
+      const selectedRole = normalizeEmployeeRoleInput(body.role);
+      const roles = await query('SELECT id FROM roles WHERE name = :role', { role: selectedRole });
       if (!roles.length) return res.status(400).json({ message: 'Selected role is not available in the database.' });
       updates.role_id = roles[0].id;
     }

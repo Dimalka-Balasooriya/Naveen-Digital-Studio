@@ -165,8 +165,10 @@ async function ensureOrderArchiveSupport({ connection = null } = {}) {
 }
 
 function addOrderVisibilityFilter(filters, params, user, options = {}) {
-  if (user?.role !== 'CO_ADMIN' && user?.role !== 'PRODUCTION_EMPLOYEE') return;
-  if (user?.role === 'CO_ADMIN' && !options.assignedOnly) return;
+  const role = String(user?.role || '').toUpperCase();
+  const isWorker = ['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'].includes(role);
+  if (role !== 'CO_ADMIN' && !isWorker) return;
+  if (role === 'CO_ADMIN' && !options.assignedOnly) return;
   filters.push(`(
     o.assigned_employee_id = :currentUserId
     OR o.assigned_co_admin_id = :currentUserId
@@ -429,7 +431,13 @@ router.get('/', authenticate, requireRole('admin'), async (req, res, next) => {
     const params = {};
 
     if (req.query.search) {
-      filters.push('(o.order_number LIKE :search OR c.name LIKE :search OR c.phone LIKE :search)');
+      filters.push(`(
+        o.order_number LIKE :search
+        OR c.name LIKE :search
+        OR c.phone LIKE :search
+        OR o.tracking_number LIKE :search
+        OR cs.name LIKE :search
+      )`);
       params.search = `%${req.query.search}%`;
     }
     if (req.query.status_id) {
@@ -472,7 +480,7 @@ router.get('/:id', authenticate, async (req, res, next) => {
     const rows = await query(`${listSql} WHERE ${detailFilters.join(' AND ')}`, detailParams);
     if (!rows.length) return res.status(404).json({ message: 'Order not found.' });
 
-    if (req.user.role === 'PRODUCTION_EMPLOYEE' && rows[0].assigned_employee_id !== req.user.id) {
+    if (['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'].includes(String(req.user.role || '').toUpperCase()) && rows[0].assigned_employee_id !== req.user.id) {
       return res.status(403).json({ message: 'This order is not assigned to you.' });
     }
 
@@ -684,8 +692,8 @@ async function getCompletionCommissionCandidates(orderId, connection = null) {
        ORDER BY c2.id DESC
        LIMIT 1
      )
-     WHERE role_table.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE')
-     ORDER BY FIELD(role_table.name, 'PRODUCTION_EMPLOYEE', 'CO_ADMIN'), candidate.name`,
+     WHERE role_table.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM')
+     ORDER BY FIELD(role_table.name, 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM', 'CO_ADMIN'), candidate.name`,
     [orderId, orderId, orderId, orderId, orderId, orderId]
   );
 
@@ -943,18 +951,19 @@ router.patch('/:id/status', authenticate, requireRole('admin', 'production'), as
       await connection.rollback();
       return res.status(404).json({ message: 'Order not found.' });
     }
-    if (req.user.role === 'PRODUCTION_EMPLOYEE'
+    const isWorkerRole = ['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'].includes(String(req.user.role || '').toUpperCase());
+    if (isWorkerRole
       && rows[0].assigned_employee_id !== req.user.id
       && !Number(rows[0].has_history_access)
       && !Number(rows[0].has_assignment_access)) {
       await connection.rollback();
       return res.status(403).json({ message: 'This order is not assigned to you.' });
     }
-    if (req.user.role === 'PRODUCTION_EMPLOYEE') {
-      const allowed = await isProductionAllowedStatus({ statusId: body.status_id, connection });
+    if (isWorkerRole) {
+      const allowed = await isProductionAllowedStatus({ statusId: body.status_id, connection, role: req.user.role });
       if (!allowed) {
         await connection.rollback();
-        return res.status(403).json({ message: 'Production employees can only use production allowed statuses.' });
+        return res.status(403).json({ message: 'This role can only use its allowed production statuses.' });
       }
     }
     await connection.execute('UPDATE orders SET status_id = ? WHERE id = ?', [body.status_id, req.params.id]);

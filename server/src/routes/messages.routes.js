@@ -61,7 +61,7 @@ function canSendWarning(role) {
 }
 
 function recipientRoleFilter(userRole) {
-  return "r.name IN ('OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE')";
+  return "r.name IN ('OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM')";
 }
 
 router.get('/recipients', async (req, res, next) => {
@@ -74,7 +74,7 @@ router.get('/recipients', async (req, res, next) => {
        WHERE e.is_active = TRUE
          AND e.id <> :current_user_id
          AND ${recipientRoleFilter(req.user.role)}
-       ORDER BY FIELD(r.name, 'OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE'), e.name`,
+       ORDER BY FIELD(r.name, 'OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'), e.name`,
       { current_user_id: req.user.id }
     );
     res.json(rows);

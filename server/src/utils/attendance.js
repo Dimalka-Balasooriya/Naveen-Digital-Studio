@@ -25,7 +25,7 @@ export async function ensureAttendanceTable() {
 }
 
 export function shouldTrackAttendance(role) {
-  return ['CO_ADMIN', 'PRODUCTION_EMPLOYEE'].includes(String(role || '').toUpperCase());
+  return ['CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'].includes(String(role || '').toUpperCase());
 }
 
 export async function recordLoginAttendance(user) {

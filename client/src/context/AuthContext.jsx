@@ -51,7 +51,7 @@ export function AuthProvider({ children }) {
       localStorage.setItem('nds_attendance_log_id', String(data.attendanceLogId));
     }
     setUser(data.user);
-    if (data.attendanceStatus === 'created' && ['CO_ADMIN', 'PRODUCTION_EMPLOYEE'].includes(normalizeRole(data.user.role))) {
+    if (data.attendanceStatus === 'created' && ['CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'].includes(normalizeRole(data.user.role))) {
       window.setTimeout(() => window.alert('Morning attendance confirmed for today.'), 250);
     }
   }

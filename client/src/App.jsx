@@ -44,10 +44,10 @@ export default function App() {
         <Route path="admin/employees" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><EmployeesPage /></ProtectedRoute>} />
         <Route path="admin/reports" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><ReportsPage /></ProtectedRoute>} />
         <Route path="admin/settings" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><SettingsPage /></ProtectedRoute>} />
-        <Route path="production" element={<ProtectedRoute roles={['PRODUCTION_EMPLOYEE', 'OWNER', 'CO_ADMIN']}><ProductionDashboard /></ProtectedRoute>} />
+        <Route path="production" element={<ProtectedRoute roles={['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM', 'OWNER', 'CO_ADMIN']}><ProductionDashboard /></ProtectedRoute>} />
         <Route path="stock" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><StockPage /></ProtectedRoute>} />
-        <Route path="messages" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE']}><MessagesPage /></ProtectedRoute>} />
-        <Route path="commissions" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE']}><CommissionPage /></ProtectedRoute>} />
+        <Route path="messages" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM']}><MessagesPage /></ProtectedRoute>} />
+        <Route path="commissions" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM']}><CommissionPage /></ProtectedRoute>} />
         <Route path="help" element={<HelpPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

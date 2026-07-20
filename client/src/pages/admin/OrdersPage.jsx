@@ -88,7 +88,10 @@ export default function OrdersPage() {
   const [orderPrintSize, setOrderPrintSize] = useState('A4');
   const [subOrders, setSubOrders] = useState([]);
 
-  const productionEmployees = useMemo(() => lookups.employees.filter((employee) => employee.role === 'PRODUCTION_EMPLOYEE' && employee.is_active), [lookups.employees]);
+  const productionEmployees = useMemo(
+    () => lookups.employees.filter((employee) => ['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'].includes(employee.role) && employee.is_active),
+    [lookups.employees]
+  );
   const coAdmins = useMemo(() => lookups.employees.filter((employee) => employee.role === 'CO_ADMIN' && employee.is_active), [lookups.employees]);
   const orderGroups = useMemo(() => {
     const groups = new Map();
@@ -801,7 +804,7 @@ export default function OrdersPage() {
         <form onSubmit={runSearch} className="flex max-w-xl flex-1 items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-2.5 text-slate-400" size={17} />
-            <input className={`${inputClass} pl-9`} placeholder="Search by order, customer, or phone" value={search} onChange={(event) => setSearch(event.target.value)} />
+            <input className={`${inputClass} pl-9`} placeholder="Search by order, customer, phone, or tracking" value={search} onChange={(event) => setSearch(event.target.value)} />
           </div>
           <button className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white">Search</button>
         </form>

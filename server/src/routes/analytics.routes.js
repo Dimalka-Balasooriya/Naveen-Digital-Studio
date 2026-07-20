@@ -83,7 +83,7 @@ router.get('/', authenticate, requireRole('admin'), async (req, res, next) => {
            ) picked ON picked.latest_id = latest.id
            GROUP BY latest.employee_id
          ) cs ON cs.employee_id = e.id
-         WHERE r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'production')
+         WHERE r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM', 'production')
            AND e.deleted_at IS NULL
          GROUP BY e.id
          ORDER BY completed_orders DESC, avg_completion_hours ASC`
@@ -112,7 +112,7 @@ router.get('/', authenticate, requireRole('admin'), async (req, res, next) => {
            ) picked ON picked.latest_id = latest.id
            GROUP BY latest.employee_id
          ) cs ON cs.employee_id = e.id
-         WHERE r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'production')
+         WHERE r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM', 'production')
            AND e.deleted_at IS NULL
          GROUP BY e.id
          ORDER BY total DESC`

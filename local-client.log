@@ -29,3 +29,30 @@ Starting client from C:\Users\HP\Documents\Codex\2026-05-18\create-a-full-stack-
 [2m1:10:01 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/production/ProductionDashboard.jsx, /src/index.css[22m
 [2m1:20:58 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/OrdersPage.jsx, /src/index.css[22m
 [2m1:23:52 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/production/ProductionDashboard.jsx, /src/index.css[22m
+[2m1:07:11 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/App.jsx, /src/index.css[22m
+[2m1:07:13 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/DashboardLayout.jsx, /src/index.css[22m
+[2m1:07:15 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/OrdersPage.jsx, /src/index.css[22m
+[2m2:47:50 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/production/ProductionDashboard.jsx, /src/index.css[22m
+[2m2:59:06 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/EmployeesPage.jsx, /src/index.css[22m
+[2m3:12:27 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/production/ProductionDashboard.jsx, /src/index.css[22m
+[2m2:24:45 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/OrdersPage.jsx, /src/index.css[22m
+[2m2:37:22 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/OrdersPage.jsx, /src/index.css[22m
+[2m3:21:55 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/OrdersPage.jsx, /src/index.css[22m
+[2m3:48:37 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/OrdersPage.jsx, /src/index.css[22m
+[2m3:51:11 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/OrdersPage.jsx, /src/index.css[22m
+[2m3:54:03 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/OrdersPage.jsx, /src/index.css[22m
+[2m4:00:04 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/OrdersPage.jsx, /src/index.css[22m
+[2m4:06:15 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/OrdersPage.jsx, /src/index.css[22m
+[2m4:32:44 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/OrdersPage.jsx, /src/index.css[22m
+[2m9:46:42 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/OrdersPage.jsx, /src/index.css[22m
+[2m9:46:42 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/OrdersPage.jsx, /src/index.css[22m
+[2m4:46:34 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/context/AuthContext.jsx, /src/index.css, /src/App.jsx, /src/components/DashboardLayout.jsx, /src/pages/CommissionPage.jsx, /src/pages/admin/AdminDashboard.jsx, /src/pages/MessagesPage.jsx, /src/pages/admin/ReportsPage.jsx, /src/pages/StockPage.jsx, /src/pages/admin/OrdersPage.jsx[22m
+[2m4:46:35 PM[22m [36m[1m[vite][22m[39m [33mhmr invalidate [39m[2m/src/context/AuthContext.jsx[22m Could not Fast Refresh ("useAuth" export is incompatible). Learn more at https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react#consistent-components-exports
+[2m4:46:35 PM[22m [36m[1m[vite][22m[39m [32mpage reload [39m[2msrc/context/AuthContext.jsx[22m
+[2m4:46:37 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/context/AuthContext.jsx, /src/index.css[22m
+[2m4:58:44 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/App.jsx, /src/index.css[22m
+[2m4:58:48 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/components/DashboardLayout.jsx, /src/index.css[22m
+[2m4:58:52 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/EmployeesPage.jsx, /src/index.css[22m
+[2m5:34:27 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/OrdersPage.jsx, /src/index.css[22m
+[2m5:37:01 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/EmployeesPage.jsx, /src/index.css[22m
+[2m5:45:30 PM[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/admin/ReportsPage.jsx, /src/index.css[22m

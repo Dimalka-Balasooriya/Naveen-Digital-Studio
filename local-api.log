@@ -1,7 +1,6 @@
 Starting API from C:\Users\HP\Documents\Codex\2026-05-18\create-a-full-stack-order-and\server 
-
-> naveen-digital-studio-api@1.0.0 start
-> node src/server.js
-
 Naveen Digital Studio API running on port 5000
-^C^C
+[0mGET /api/health [32m200[0m 31.599 ms - 53[0m
+[auth] Login attempt for admin@naveendigitalstudio.com
+[auth] Login success for admin@naveendigitalstudio.com with role OWNER
+[0mPOST /api/auth/login [32m200[0m 2789.831 ms - 353[0m

@@ -119,7 +119,7 @@ async function performanceRows(queryParams = {}, currentUser = null) {
      ) cs ON cs.employee_id = e.id
      LEFT JOIN order_assignments oa ON oa.assigned_to_employee_id = e.id
      LEFT JOIN employees admin ON admin.id = oa.assigned_by_admin_id
-     WHERE r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'production')
+     WHERE r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM', 'production')
        AND e.deleted_at IS NULL
      ${where}
      GROUP BY e.id, r.name
@@ -376,7 +376,10 @@ async function orderReportRows(type, queryParams = {}) {
 
 async function rolePerformanceRows(role, queryParams = {}) {
   const range = monthRange(queryParams.month);
-  const personJoin = role === 'CO_ADMIN'
+  const roleValues = Array.isArray(role) ? role : [role];
+  const rolePlaceholders = roleValues.map((_, index) => `:role${index}`).join(', ');
+  const roleParams = Object.fromEntries(roleValues.map((value, index) => [`role${index}`, value]));
+  const personJoin = roleValues.includes('CO_ADMIN') && roleValues.length === 1
     ? 'LEFT JOIN order_assignments oa ON oa.assigned_by_admin_id = e.id LEFT JOIN orders o ON o.id = oa.order_id AND DATE(o.created_at) BETWEEN :start AND LAST_DAY(:start)'
     : 'LEFT JOIN orders o ON o.assigned_employee_id = e.id AND DATE(o.created_at) BETWEEN :start AND LAST_DAY(:start)';
   return query(
@@ -391,17 +394,20 @@ async function rolePerformanceRows(role, queryParams = {}) {
      JOIN roles r ON r.id = e.role_id
      ${personJoin}
      LEFT JOIN order_statuses s ON s.id = o.status_id
-     WHERE r.name = :role AND e.deleted_at IS NULL
+     WHERE r.name IN (${rolePlaceholders}) AND e.deleted_at IS NULL
      GROUP BY e.id, r.name
      ORDER BY completed_orders DESC, total_assigned_orders DESC`,
-    { start: range.start, role }
+    { start: range.start, ...roleParams }
   );
 }
 
 async function roleCommissionRows(role, queryParams = {}, currentUser = null) {
   const range = monthRange(queryParams.month);
-  const scopedToCurrentCoAdmin = currentUser?.role === 'CO_ADMIN' && role === 'CO_ADMIN';
-  const params = { start: range.start, role };
+  const roleValues = Array.isArray(role) ? role : [role];
+  const rolePlaceholders = roleValues.map((_, index) => `:role${index}`).join(', ');
+  const roleParams = Object.fromEntries(roleValues.map((value, index) => [`role${index}`, value]));
+  const scopedToCurrentCoAdmin = currentUser?.role === 'CO_ADMIN' && roleValues.includes('CO_ADMIN') && roleValues.length === 1;
+  const params = { start: range.start, ...roleParams };
   if (scopedToCurrentCoAdmin) params.currentEmployeeId = currentUser.id;
   return query(
     `SELECT e.name AS employee_name, e.email, r.name AS role, o.order_number,
@@ -415,7 +421,7 @@ async function roleCommissionRows(role, queryParams = {}, currentUser = null) {
      JOIN roles r ON r.id = e.role_id
      JOIN orders o ON o.id = c.order_id
      JOIN order_statuses s ON s.id = o.status_id
-     WHERE r.name = :role
+     WHERE r.name IN (${rolePlaceholders})
        AND DATE(c.assignment_started_at) BETWEEN :start AND LAST_DAY(:start)
        ${scopedToCurrentCoAdmin ? 'AND e.id = :currentEmployeeId' : ''}
      ORDER BY e.name, c.assignment_started_at DESC`,
@@ -426,7 +432,7 @@ async function roleCommissionRows(role, queryParams = {}, currentUser = null) {
 async function attendanceRows(queryParams = {}) {
   const range = dateRange(queryParams);
   const filters = advancedFilters(queryParams, { employeeAlias: 'e' });
-  const roleClause = queryParams.role ? 'AND r.name = :role' : "AND r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE')";
+  const roleClause = queryParams.role ? 'AND r.name = :role' : "AND r.name IN ('CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM')";
   return query(
     `SELECT e.name AS employee_name, e.email, r.name AS role,
       a.attendance_date, a.login_time, a.logout_time, a.logout_status,
@@ -446,9 +452,9 @@ async function attendanceRows(queryParams = {}) {
 async function advancedRows(type, queryParams = {}, currentUser = null) {
   if (['complete_monthly_orders', 'return_monthly_orders', 'cancel_monthly_orders', 'closed_orders_report'].includes(type)) return orderReportRows(type, queryParams);
   if (type === 'co_admin_performance') return rolePerformanceRows('CO_ADMIN', queryParams);
-  if (type === 'production_performance') return rolePerformanceRows('PRODUCTION_EMPLOYEE', queryParams);
+  if (type === 'production_performance') return rolePerformanceRows(['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'], queryParams);
   if (type === 'co_admin_commissions') return roleCommissionRows('CO_ADMIN', queryParams, currentUser);
-  if (type === 'production_commissions') return roleCommissionRows('PRODUCTION_EMPLOYEE', queryParams, currentUser);
+  if (type === 'production_commissions') return roleCommissionRows(['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'], queryParams, currentUser);
   if (type === 'daily_attendance' || type === 'attendance') return attendanceRows({ ...queryParams, period: queryParams.period || 'day' });
   const error = new Error('Unknown report type.');
   error.status = 404;

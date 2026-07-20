@@ -10,8 +10,9 @@ router.use(authenticate);
 router.get('/', async (req, res, next) => {
   try {
     const params = {};
-    const filter = req.user.role === 'PRODUCTION_EMPLOYEE' ? 'AND (r.employee_id = :employeeId OR r.employee_id IS NULL)' : '';
-    if (req.user.role === 'PRODUCTION_EMPLOYEE') params.employeeId = req.user.id;
+    const isWorker = ['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'].includes(String(req.user.role || '').toUpperCase());
+    const filter = isWorker ? 'AND (r.employee_id = :employeeId OR r.employee_id IS NULL)' : '';
+    if (isWorker) params.employeeId = req.user.id;
 
     const reminders = await query(
       `SELECT r.*, o.order_number, e.name AS employee_name

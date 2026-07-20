@@ -114,9 +114,10 @@ const defaultOrderStatuses = [
   { name: 'Issued For Production', color: '#F43F5E' },
   { name: 'Collected By Night Branch', color: '#EAB308' },
   { name: 'Collected By Warehouse', color: '#22C55E' },
-  { name: 'Collecting By Kb', color: '#0D9488' },
+  { name: 'Collecting By KB', color: '#0D9488' },
   { name: 'Production Ongoing', color: '#0891B2' },
   { name: 'Issued For Transport Lorry/Wheel', color: '#3B82F6' },
+  { name: 'Production Done', color: '#059669' },
   { name: 'Order Processing', color: '#7C3AED' },
   { name: 'Order Reschedule 01', color: '#D97706' },
   { name: 'Order Reschedule 02', color: '#EA580C' },
@@ -142,6 +143,15 @@ export function returnedCancelReason(statusName) {
 }
 
 export const productionAllowedStatuses = [
+  { name: 'Collected By Warehouse', color: '#22C55E' },
+  { name: 'Collecting By KB', color: '#0D9488' },
+  { name: 'Production Ongoing', color: '#0891B2' },
+  { name: 'Issued For Transport Lorry/Wheel', color: '#3B82F6' },
+  { name: 'Collected By Night Branch', color: '#EAB308' },
+  { name: 'Production Done', color: '#059669' }
+];
+
+export const designAllowedStatuses = [
   { name: 'New', color: '#0EA5E9' },
   { name: 'Editing', color: '#10B981' },
   { name: 'Editing Done', color: '#8B5CF6' },
@@ -155,7 +165,13 @@ function normalizeStatusName(value = '') {
   return String(value).trim().toLowerCase();
 }
 
-export async function ensureProductionAllowedStatuses({ connection = null } = {}) {
+export function allowedStatusesForRole(role) {
+  const normalized = String(role || '').toUpperCase();
+  return normalized === 'PRODUCTION_EMPLOYEE' ? productionAllowedStatuses : designAllowedStatuses;
+}
+
+export async function ensureProductionAllowedStatuses({ connection = null, role = 'DESIGN_TEAM' } = {}) {
+  const allowedStatuses = allowedStatusesForRole(role);
   const existingRows = await run(
     connection,
     `SELECT id, name, color, sort_order
@@ -165,7 +181,7 @@ export async function ensureProductionAllowedStatuses({ connection = null } = {}
   const existingByName = new Map(existingRows.map((status) => [normalizeStatusName(status.name), status]));
   let maxSortOrder = existingRows.reduce((max, status) => Math.max(max, Number(status.sort_order || 0)), 0);
 
-  for (const status of productionAllowedStatuses) {
+  for (const status of allowedStatuses) {
     const normalized = normalizeStatusName(status.name);
     if (!existingByName.has(normalized)) {
       maxSortOrder += 1;
@@ -184,18 +200,18 @@ export async function ensureProductionAllowedStatuses({ connection = null } = {}
      FROM order_statuses
      WHERE is_active = TRUE`
   );
-  const orderMap = new Map(productionAllowedStatuses.map((status, index) => [normalizeStatusName(status.name), index]));
+  const orderMap = new Map(allowedStatuses.map((status, index) => [normalizeStatusName(status.name), index]));
 
   return refreshedRows
     .filter((status) => orderMap.has(normalizeStatusName(status.name)))
     .sort((a, b) => orderMap.get(normalizeStatusName(a.name)) - orderMap.get(normalizeStatusName(b.name)));
 }
 
-export async function isProductionAllowedStatus({ statusId, connection = null }) {
-  await ensureProductionAllowedStatuses({ connection });
+export async function isProductionAllowedStatus({ statusId, connection = null, role = 'DESIGN_TEAM' }) {
+  await ensureProductionAllowedStatuses({ connection, role });
   const rows = await run(connection, 'SELECT name FROM order_statuses WHERE id = ? AND is_active = TRUE', [statusId]);
   if (!rows.length) return false;
-  const allowedNames = new Set(productionAllowedStatuses.map((status) => normalizeStatusName(status.name)));
+  const allowedNames = new Set(allowedStatusesForRole(role).map((status) => normalizeStatusName(status.name)));
   return allowedNames.has(normalizeStatusName(rows[0].name));
 }
 

@@ -9,6 +9,10 @@ const router = Router();
 
 router.use(authenticate, requireRole('production', 'admin'));
 
+function isWorkerRole(role) {
+  return ['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'].includes(String(role || '').toUpperCase());
+}
+
 let hasCheckedOrderArchiveColumns = false;
 async function ensureOrderArchiveSupport() {
   if (hasCheckedOrderArchiveColumns) return;
@@ -32,7 +36,7 @@ async function ensureOrderArchiveSupport() {
 
 router.get('/statuses', async (req, res, next) => {
   try {
-    const statuses = await ensureProductionAllowedStatuses();
+    const statuses = await ensureProductionAllowedStatuses({ role: req.user.role });
     res.json(statuses);
   } catch (error) {
     next(error);
@@ -44,7 +48,7 @@ router.get('/orders', async (req, res, next) => {
     await ensureOrderArchiveSupport();
     const params = {};
     const filters = ['COALESCE(o.archived_from_active_list, FALSE) = FALSE'];
-    if (req.user.role === 'PRODUCTION_EMPLOYEE') {
+    if (isWorkerRole(req.user.role)) {
       filters.push(`(
         o.assigned_employee_id = :employeeId
         OR EXISTS (
@@ -59,7 +63,7 @@ router.get('/orders', async (req, res, next) => {
         )
       )`);
     }
-    if (req.user.role === 'PRODUCTION_EMPLOYEE') params.employeeId = req.user.id;
+    if (isWorkerRole(req.user.role)) params.employeeId = req.user.id;
     const where = `WHERE ${filters.join(' AND ')}`;
 
     const orders = await query(
@@ -109,16 +113,16 @@ router.patch('/orders/:id/progress', async (req, res, next) => {
       { id: req.params.id, employeeId: req.user.id }
     );
     if (!ownership.length) return res.status(404).json({ message: 'Order not found.' });
-    if (req.user.role === 'PRODUCTION_EMPLOYEE'
+    if (isWorkerRole(req.user.role)
       && ownership[0].assigned_employee_id !== req.user.id
       && !Number(ownership[0].has_history_access)
       && !Number(ownership[0].has_assignment_access)) {
       return res.status(403).json({ message: 'This order is not assigned to you.' });
     }
-    if (req.user.role === 'PRODUCTION_EMPLOYEE' && body.status_id) {
-      const allowed = await isProductionAllowedStatus({ statusId: body.status_id });
+    if (isWorkerRole(req.user.role) && body.status_id) {
+      const allowed = await isProductionAllowedStatus({ statusId: body.status_id, role: req.user.role });
       if (!allowed) {
-        return res.status(403).json({ message: 'Production employees can only use production allowed statuses.' });
+        return res.status(403).json({ message: 'This role can only use its allowed production statuses.' });
       }
     }
 
@@ -171,7 +175,7 @@ router.post('/orders/:id/tasks/:taskId/toggle', async (req, res, next) => {
       { id: req.params.id, employeeId: req.user.id }
     );
     if (!ownership.length) return res.status(404).json({ message: 'Order not found.' });
-    if (req.user.role === 'PRODUCTION_EMPLOYEE'
+    if (isWorkerRole(req.user.role)
       && ownership[0].assigned_employee_id !== req.user.id
       && !Number(ownership[0].has_history_access)
       && !Number(ownership[0].has_assignment_access)) {

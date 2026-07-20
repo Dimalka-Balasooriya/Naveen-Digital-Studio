@@ -154,6 +154,7 @@ export default function ReportsPage() {
             <option value="">All roles</option>
             <option value="CO_ADMIN">Co-admin</option>
             <option value="PRODUCTION_EMPLOYEE">Production Employee</option>
+            <option value="DESIGN_TEAM">Design Team</option>
           </select>
           <select className={inputClass} value={status} onChange={(event) => setStatus(event.target.value)}>
             <option value="">All statuses</option>

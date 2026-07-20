@@ -47,7 +47,7 @@ export default function EmployeesPage() {
         setNotice('Employee updated successfully.');
       } else {
         await api.post('/employees', payload);
-        setNotice(form.role === 'CO_ADMIN' ? 'CO_ADMIN created successfully.' : 'Employee created successfully.');
+        setNotice(form.role === 'CO_ADMIN' ? 'CO_ADMIN created successfully.' : form.role === 'DESIGN_TEAM' ? 'Design team member created successfully.' : 'Employee created successfully.');
       }
       setForm(emptyEmployee);
       setEditingEmployee(null);
@@ -171,6 +171,7 @@ export default function EmployeesPage() {
           <Field label="Role"><select className={inputClass} value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}>
             <option value="CO_ADMIN">Co-admin</option>
             <option value="PRODUCTION_EMPLOYEE">Production Employee</option>
+            <option value="DESIGN_TEAM">Design Team</option>
           </select></Field>
           <Field label={editingEmployee ? 'New password' : 'Password'}>
             <PasswordField autoComplete="new-password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} required={!editingEmployee} />
