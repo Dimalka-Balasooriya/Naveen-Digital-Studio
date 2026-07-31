@@ -4,3 +4,119 @@ Naveen Digital Studio API running on port 5000
 [auth] Login attempt for admin@naveendigitalstudio.com
 [auth] Login success for admin@naveendigitalstudio.com with role OWNER
 [0mPOST /api/auth/login [32m200[0m 2789.831 ms - 353[0m
+[auth] Login attempt for admin@naveendigitalstudio.com
+[auth] Login success for admin@naveendigitalstudio.com with role OWNER
+[0mPOST /api/auth/login [32m200[0m 445.145 ms - 353[0m
+[0mGET /api/messages/unread-count [32m200[0m 1128.852 ms - 18[0m
+[0mGET /api/analytics [32m200[0m 1869.772 ms - 6559[0m
+[0mGET /api/messages/unread-count [32m200[0m 870.582 ms - 18[0m
+[0mGET /api/analytics [32m200[0m 589.067 ms - 6559[0m
+[0mGET /api/lookups/pages?_=1784568639625 [32m200[0m 483.993 ms - 269[0m
+[0mGET /api/lookups/products?_=1784568639625 [32m200[0m 581.986 ms - 1001[0m
+[0mGET /api/lookups/couriers?_=1784568639625 [32m200[0m 910.107 ms - 207[0m
+[0mGET /api/lookups/products?_=1784568639626 [32m200[0m 529.106 ms - 1001[0m
+[0mGET /api/lookups/pages?_=1784568639626 [32m200[0m 434.490 ms - 269[0m
+[0mGET /api/employees?_=1784568639625 [32m200[0m 1756.612 ms - 2912[0m
+[0mGET /api/lookups/couriers?_=1784568639626 [32m200[0m 868.350 ms - 207[0m
+[0mGET /api/lookups/statuses?_=1784568639625 [32m200[0m 12572.496 ms - 2661[0m
+[0mGET /api/lookups/statuses?include_inactive=true&_=1784568639625 [32m200[0m 12805.946 ms - 3278[0m
+[0mGET /api/employees?_=1784568639626 [32m200[0m 467.123 ms - 2912[0m
+[0mGET /api/lookups/statuses?_=1784568639626 [32m200[0m 11482.420 ms - 2661[0m
+[0mGET /api/lookups/statuses?include_inactive=true&_=1784568639626 [32m200[0m 11076.083 ms - 3278[0m
+[0mGET /api/orders?_=1784568639625 [32m200[0m 14697.601 ms - 267925[0m
+[0mGET /api/orders?_=1784568639626 [32m200[0m 14204.398 ms - 267925[0m
+[0mGET /api/messages/unread-count [32m200[0m 483.913 ms - 18[0m
+[0mGET /api/lookups/pages [32m200[0m 444.469 ms - 269[0m
+[0mGET /api/lookups/products [32m200[0m 442.608 ms - 1001[0m
+[0mGET /api/lookups/pages [32m200[0m 430.435 ms - 269[0m
+[0mGET /api/lookups/couriers [32m200[0m 876.476 ms - 207[0m
+[0mGET /api/lookups/products [32m200[0m 511.558 ms - 1001[0m
+[0mGET /api/lookups/couriers [32m200[0m 248.527 ms - 207[0m
+[0mGET /api/employees [32m200[0m 283.191 ms - 2912[0m
+[0mGET /api/employees [32m200[0m 206.904 ms - 2912[0m
+[0mGET /api/lookups/statuses [32m200[0m 6585.478 ms - 2661[0m
+[0mGET /api/lookups/statuses [32m200[0m 6429.733 ms - 2661[0m
+[0mPUT /api/employees/21 [32m200[0m 1148.973 ms - 141[0m
+[0mGET /api/employees [32m200[0m 176.679 ms - 2918[0m
+[0mPUT /api/employees/20 [32m200[0m 511.697 ms - 147[0m
+[0mGET /api/employees [32m200[0m 237.603 ms - 2924[0m
+[0mGET /api/messages/unread-count [32m200[0m 620.685 ms - 18[0m
+[0mPUT /api/employees/19 [32m200[0m 993.521 ms - 141[0m
+[0mGET /api/employees [32m200[0m 394.782 ms - 2930[0m
+[0mPOST /api/auth/logout [32m200[0m 688.324 ms - 30[0m
+[auth] Login attempt for admin@naveendigitalstudio.com
+[auth] Login success for admin@naveendigitalstudio.com with role OWNER
+[0mPOST /api/auth/login [32m200[0m 576.359 ms - 353[0m
+[0mGET /api/messages/unread-count [32m200[0m 338.242 ms - 18[0m
+[0mGET /api/analytics [32m200[0m 676.198 ms - 6559[0m
+[0mGET /api/messages/unread-count [32m200[0m 463.034 ms - 18[0m
+[0mGET /api/analytics [32m200[0m 439.001 ms - 6559[0m
+[0mGET /api/lookups/products?_=1784568808343 [32m200[0m 279.219 ms - 1001[0m
+[0mGET /api/lookups/pages?_=1784568808343 [32m200[0m 284.538 ms - 269[0m
+[0mGET /api/lookups/couriers?_=1784568808343 [32m200[0m 558.738 ms - 207[0m
+[0mGET /api/lookups/products?_=1784568808343 [32m200[0m 390.665 ms - 1001[0m
+[0mGET /api/lookups/pages?_=1784568808343 [32m200[0m 393.816 ms - 269[0m
+[0mGET /api/employees?_=1784568808343 [32m200[0m 426.266 ms - 2930[0m
+[0mGET /api/lookups/couriers?_=1784568808343 [32m200[0m 544.208 ms - 207[0m
+[0mGET /api/employees?_=1784568808343 [32m200[0m 344.684 ms - 2930[0m
+[0mGET /api/lookups/statuses?_=1784568808343 [32m200[0m 8222.898 ms - 2661[0m
+[0mGET /api/lookups/statuses?include_inactive=true&_=1784568808343 [32m200[0m 8373.610 ms - 3278[0m
+[0mGET /api/orders?_=1784568808342 [32m200[0m 8485.630 ms - 267925[0m
+[0mGET /api/orders?_=1784568808343 [32m200[0m 8171.279 ms - 267925[0m
+[0mGET /api/lookups/statuses?_=1784568808343 [32m200[0m 5668.226 ms - 2661[0m
+[0mGET /api/lookups/statuses?include_inactive=true&_=1784568808343 [32m200[0m 5696.426 ms - 3278[0m
+[0mGET /api/messages/unread-count [32m200[0m 397.903 ms - 18[0m
+[0mGET /api/messages/unread-count [32m200[0m 504.041 ms - 18[0m
+[0mGET /api/lookups/products?_=1784568958693 [32m200[0m 342.303 ms - 1001[0m
+[0mGET /api/lookups/pages?_=1784568958693 [32m200[0m 423.713 ms - 269[0m
+[0mGET /api/lookups/couriers?_=1784568958693 [32m200[0m 514.674 ms - 207[0m
+[0mGET /api/employees?_=1784568958693 [32m200[0m 513.199 ms - 2930[0m
+[0mGET /api/lookups/statuses?include_inactive=true&_=1784568958693 [32m200[0m 6758.263 ms - 3278[0m
+[0mGET /api/lookups/statuses?_=1784568958693 [32m200[0m 6851.278 ms - 2661[0m
+[0mGET /api/messages/unread-count [32m200[0m 407.385 ms - 18[0m
+[0mGET /api/messages/unread-count [32m200[0m 294.772 ms - 18[0m
+[0mGET /api/messages/unread-count [32m200[0m 421.024 ms - 18[0m
+[0mGET /api/messages/unread-count [32m200[0m 282.686 ms - 18[0m
+[0mPOST /api/orders [32m201[0m 16064.923 ms - 1168[0m
+[0mGET /api/lookups/pages?_=1784569183214 [32m200[0m 406.283 ms - 269[0m
+[0mGET /api/lookups/products?_=1784569183214 [32m200[0m 414.776 ms - 1001[0m
+[0mGET /api/lookups/couriers?_=1784569183214 [32m200[0m 712.654 ms - 207[0m
+[0mGET /api/employees?_=1784569183214 [32m200[0m 492.286 ms - 2929[0m
+[0mGET /api/lookups/statuses?_=1784569183214 [32m200[0m 8921.113 ms - 2661[0m
+[0mGET /api/lookups/statuses?include_inactive=true&_=1784569183214 [32m200[0m 8933.197 ms - 3278[0m
+[0mGET /api/orders?_=1784569183214 [32m200[0m 9169.279 ms - 269067[0m
+[0mPOST /api/auth/logout [32m200[0m 509.384 ms - 30[0m
+[auth] Login attempt for oshan@naveendigitalstudio.com
+[auth] Login success for oshan@naveendigitalstudio.com with role PRODUCTION_EMPLOYEE
+[0mPOST /api/auth/login [32m200[0m 1044.167 ms - 375[0m
+[0mGET /api/reminders [32m200[0m 405.472 ms - 2[0m
+[0mGET /api/production/commissions [32m200[0m 573.623 ms - 2[0m
+[0mGET /api/commissions/all?month=2026-07 [32m200[0m 671.808 ms - 4736[0m
+[0mGET /api/production/profile/stats [32m200[0m 700.526 ms - 81[0m
+[0mGET /api/production/statuses [32m200[0m 780.049 ms - 453[0m
+[0mGET /api/production/orders [32m200[0m 836.921 ms - 527[0m
+[0mGET /api/messages/unread-count [32m200[0m 559.210 ms - 18[0m
+[0mGET /api/reminders [32m200[0m 588.658 ms - 2[0m
+[0mGET /api/production/commissions [32m200[0m 491.078 ms - 2[0m
+[0mGET /api/production/profile/stats [32m200[0m 547.662 ms - 81[0m
+[0mGET /api/commissions/all?month=2026-07 [32m200[0m 514.030 ms - 4736[0m
+[0mGET /api/messages/unread-count [32m200[0m 273.903 ms - 18[0m
+[0mGET /api/production/orders [32m200[0m 553.512 ms - 527[0m
+[0mGET /api/production/statuses [32m200[0m 700.709 ms - 453[0m
+[0mGET /api/messages/unread-count [32m200[0m 423.807 ms - 18[0m
+[0mGET /api/messages/unread-count [32m200[0m 5865.608 ms - 18[0m
+[0mGET /api/messages/unread-count [32m200[0m 329.474 ms - 18[0m
+[0mGET /api/messages/unread-count [32m200[0m 339.685 ms - 18[0m
+[0mGET /api/messages/unread-count [32m200[0m 380.912 ms - 18[0m
+[0mGET /api/messages/unread-count [32m200[0m 243.902 ms - 18[0m
+[0mGET /api/messages/unread-count [32m200[0m 252.531 ms - 18[0m
+[0mGET /api/messages/unread-count [32m200[0m 391.792 ms - 18[0m
+[0mGET /api/messages/unread-count [32m200[0m 319.978 ms - 18[0m
+[0mGET /api/messages/unread-count [32m200[0m 258.903 ms - 18[0m
+[0mGET /api/messages/unread-count [32m200[0m 288.260 ms - 18[0m
+[0mGET /api/messages/unread-count [32m200[0m 226.725 ms - 18[0m
+[db] Query failed: ENOTFOUND
+[0mGET /api/reminders [33m401[0m 34.859 ms - 39[0m
+[db] Query failed: ENOTFOUND
+[0mGET /api/messages/unread-count [33m401[0m 17.538 ms - 39[0m
+API command exited with -1 

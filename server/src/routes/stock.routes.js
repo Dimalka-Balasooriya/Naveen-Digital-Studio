@@ -153,6 +153,14 @@ async function ensureStockTables() {
     await query('ALTER TABLE stock_catalog_items ADD COLUMN unit_price DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER item_code');
   }
 
+  const catalogCreatedAtColumn = await query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'stock_catalog_items' AND COLUMN_NAME = 'created_at'`
+  );
+  if (!catalogCreatedAtColumn.length) {
+    await query('ALTER TABLE stock_catalog_items ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP');
+  }
+
   const stockPriceColumn = await query(
     `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'stock_items' AND COLUMN_NAME = 'unit_price'`
@@ -558,21 +566,55 @@ router.get('/catalog/items', requireAdminOrCoAdmin, async (req, res, next) => {
   try {
     await ensureStockTables();
     const search = String(req.query.search || '').trim();
+    const filter = ['today', 'recent'].includes(String(req.query.filter || '').toLowerCase())
+      ? String(req.query.filter).toLowerCase()
+      : 'all';
+    const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 24, 1), 100);
+    const offset = (page - 1) * limit;
     const filters = ['is_active = TRUE'];
     const params = {};
     if (search) {
       filters.push('(item_name LIKE :search OR item_code LIKE :search)');
       params.search = `%${search}%`;
     }
+
+    if (filter === 'today') {
+      const now = new Date();
+      const sriLankaOffsetMs = 5.5 * 60 * 60 * 1000;
+      const sriLankaNow = new Date(now.getTime() + sriLankaOffsetMs);
+      const startSriLanka = new Date(Date.UTC(
+        sriLankaNow.getUTCFullYear(),
+        sriLankaNow.getUTCMonth(),
+        sriLankaNow.getUTCDate(),
+        0,
+        0,
+        0
+      ));
+      const endSriLanka = new Date(startSriLanka.getTime() + 24 * 60 * 60 * 1000);
+      params.today_start = new Date(startSriLanka.getTime() - sriLankaOffsetMs);
+      params.today_end = new Date(endSriLanka.getTime() - sriLankaOffsetMs);
+      filters.push('created_at >= :today_start AND created_at < :today_end');
+    }
+
+    const whereClause = filters.join(' AND ');
+    const totalRows = await query(
+      `SELECT COUNT(*) AS total
+       FROM stock_catalog_items
+       WHERE ${whereClause}`,
+      params
+    );
+    const total = Number(totalRows[0]?.total || 0);
+    const totalPages = Math.max(Math.ceil(total / limit), 1);
     const rows = await query(
       `SELECT *
        FROM stock_catalog_items
-       WHERE ${filters.join(' AND ')}
-       ORDER BY item_name, item_code
-       LIMIT 100`,
+       WHERE ${whereClause}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ${limit} OFFSET ${offset}`,
       params
     );
-    res.json(rows);
+    res.json({ items: rows, total, page, totalPages });
   } catch (error) {
     next(error);
   }

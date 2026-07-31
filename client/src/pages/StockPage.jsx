@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Download, Edit3, Eye, History, Minus, Package, Plus, Printer, ReceiptText, Trash2, Warehouse } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, Edit3, Eye, History, Minus, Package, Plus, Printer, ReceiptText, Search, Trash2, Warehouse } from 'lucide-react';
 import { api } from '../services/api';
 import Modal from '../components/Modal';
 import { Field, inputClass } from '../components/FormFields';
@@ -23,6 +23,11 @@ export default function StockPage() {
 
   const [branches, setBranches] = useState([]);
   const [catalogItems, setCatalogItems] = useState([]);
+  const [catalogSuggestions, setCatalogSuggestions] = useState([]);
+  const [catalogMeta, setCatalogMeta] = useState({ total: 0, page: 1, totalPages: 1 });
+  const [catalogMasterSearch, setCatalogMasterSearch] = useState('');
+  const [catalogFilter, setCatalogFilter] = useState('all');
+  const [catalogPage, setCatalogPage] = useState(1);
   const [catalogForm, setCatalogForm] = useState(emptyCatalogItem);
   const [editingCatalogItem, setEditingCatalogItem] = useState(null);
   const [catalogSearch, setCatalogSearch] = useState('');
@@ -44,6 +49,8 @@ export default function StockPage() {
   const [billLine, setBillLine] = useState(emptyBillLine);
   const [billLines, setBillLines] = useState([]);
   const [billHistory, setBillHistory] = useState([]);
+  const [billHistoryOpen, setBillHistoryOpen] = useState(false);
+  const [billHistorySearch, setBillHistorySearch] = useState('');
   const [generatedBill, setGeneratedBill] = useState(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -55,6 +62,26 @@ export default function StockPage() {
     () => billLines.reduce((sum, line) => sum + Number(line.quantity || 0) * Number(line.unit_price || 0), 0),
     [billLines]
   );
+  const latestBillHistory = useMemo(() => billHistory.slice(0, 3), [billHistory]);
+  const filteredBillHistory = useMemo(() => {
+    const term = billHistorySearch.trim().toLowerCase();
+    if (!term) return billHistory;
+    return billHistory.filter((bill) => {
+      const searchable = [
+        bill.bill_number,
+        bill.customer_name,
+        bill.generated_by_name,
+        bill.generated_by_role,
+        bill.generated_at ? new Date(bill.generated_at).toLocaleString() : '',
+        bill.total_amount,
+        bill.item_count
+      ]
+        .filter((value) => value !== null && value !== undefined)
+        .join(' ')
+        .toLowerCase();
+      return searchable.includes(term);
+    });
+  }, [billHistory, billHistorySearch]);
   const itemFormTotal = useMemo(
     () => Number(itemForm.quantity || 0) * Number(itemForm.unit_price || 0),
     [itemForm.quantity, itemForm.unit_price]
@@ -62,10 +89,27 @@ export default function StockPage() {
   const filteredCatalogItems = useMemo(() => {
     const term = String(catalogSearch || itemForm.item_name || itemForm.item_code || '').trim().toLowerCase();
     if (!term) return catalogItems.slice(0, 8);
-    return catalogItems
-      .filter((item) => item.item_name.toLowerCase().includes(term) || item.item_code.toLowerCase().includes(term))
-      .slice(0, 8);
-  }, [catalogItems, catalogSearch, itemForm.item_code, itemForm.item_name]);
+    return catalogSuggestions.slice(0, 8);
+  }, [catalogItems, catalogSearch, catalogSuggestions, itemForm.item_code, itemForm.item_name]);
+
+  function formatCatalogDate(value) {
+    if (!value) return 'No created date';
+    return new Date(value).toLocaleString('en-LK', {
+      timeZone: 'Asia/Colombo',
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+
+  function isAddedToday(value) {
+    if (!value) return false;
+    const itemDate = new Date(value).toLocaleDateString('en-CA', { timeZone: 'Asia/Colombo' });
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Colombo' });
+    return itemDate === today;
+  }
 
   async function loadBranches() {
     const { data } = await api.get('/stock/branches', { params: { _: Date.now() } });
@@ -76,9 +120,22 @@ export default function StockPage() {
     }
   }
 
-  async function loadCatalogItems(search = '') {
-    const { data } = await api.get('/stock/catalog/items', { params: { search, _: Date.now() } });
-    setCatalogItems(data);
+  async function loadCatalogItems(search = null) {
+    const params = {
+      search: typeof search === 'string' ? search : catalogMasterSearch,
+      filter: catalogFilter,
+      page: catalogPage,
+      limit: 24,
+      _: Date.now()
+    };
+    const { data } = await api.get('/stock/catalog/items', { params });
+    const items = Array.isArray(data) ? data : data.items || [];
+    setCatalogItems(items);
+    setCatalogMeta({
+      total: Array.isArray(data) ? items.length : Number(data.total || 0),
+      page: Array.isArray(data) ? 1 : Number(data.page || 1),
+      totalPages: Array.isArray(data) ? 1 : Number(data.totalPages || 1)
+    });
   }
 
   async function loadItems(branchId = selectedBranch?.id) {
@@ -95,9 +152,35 @@ export default function StockPage() {
 
   useEffect(() => {
     loadBranches().catch((requestError) => setError(requestError.response?.data?.message || 'Stock details could not load.'));
-    loadCatalogItems().catch(() => {});
     loadBillHistory().catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      loadCatalogItems().catch((requestError) => setError(requestError.response?.data?.message || 'Item Master could not load.'));
+    }, 200);
+    return () => window.clearTimeout(timeoutId);
+  }, [catalogMasterSearch, catalogFilter, catalogPage]);
+
+  useEffect(() => {
+    if (!itemModalOpen) return undefined;
+    const term = String(catalogSearch || itemForm.item_name || itemForm.item_code || '').trim();
+    if (!term) {
+      setCatalogSuggestions([]);
+      return undefined;
+    }
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const { data } = await api.get('/stock/catalog/items', {
+          params: { search: term, filter: 'all', page: 1, limit: 8, _: Date.now() }
+        });
+        setCatalogSuggestions(Array.isArray(data) ? data : data.items || []);
+      } catch {
+        setCatalogSuggestions([]);
+      }
+    }, 200);
+    return () => window.clearTimeout(timeoutId);
+  }, [catalogSearch, itemForm.item_code, itemForm.item_name, itemModalOpen]);
 
   useEffect(() => {
     if (!canGenerateStockBill) return undefined;
@@ -129,7 +212,8 @@ export default function StockPage() {
       } catch (requestError) {
         try {
           const { data } = await api.get('/stock/catalog/items', { params: { search: term, _: Date.now() } });
-          setBillItems(data.map((item) => ({
+          const catalogMatches = Array.isArray(data) ? data : data.items || [];
+          setBillItems(catalogMatches.map((item) => ({
             ...item,
             id: `catalog-${item.id}`,
             stock_item_id: '',
@@ -158,6 +242,7 @@ export default function StockPage() {
       setNotice(data.message || (editingCatalogItem ? 'Item updated.' : 'Item added.'));
       setCatalogForm(emptyCatalogItem);
       setEditingCatalogItem(null);
+      setCatalogPage(1);
       await loadCatalogItems();
     } catch (requestError) {
       setError(requestError.response?.data?.message || 'Item could not be saved.');
@@ -253,6 +338,7 @@ export default function StockPage() {
     setEditingItem(null);
     setItemForm(emptyItem);
     setCatalogSearch('');
+    setCatalogSuggestions([]);
     setError('');
     setItemModalOpen(true);
   }
@@ -531,6 +617,32 @@ export default function StockPage() {
     }
   }
 
+  function renderBillHistoryRow(bill) {
+    return (
+      <tr key={bill.id} className="hover:bg-slate-50">
+        <td className="px-4 py-3 font-semibold text-slate-950">{bill.bill_number}</td>
+        <td className="px-4 py-3 text-slate-700">{bill.customer_name || '-'}</td>
+        <td className="px-4 py-3 text-slate-700">{bill.item_count || 0}</td>
+        <td className="px-4 py-3 text-slate-700">
+          <span className="block font-medium">{bill.generated_by_name || '-'}</span>
+          <span className="text-xs text-slate-500">{bill.generated_by_role || ''}</span>
+        </td>
+        <td className="px-4 py-3 text-slate-700">{bill.generated_at ? new Date(bill.generated_at).toLocaleString() : '-'}</td>
+        <td className="px-4 py-3 text-right font-semibold text-slate-950">Rs. {Number(bill.total_amount || 0).toLocaleString()}</td>
+        <td className="px-4 py-3 text-right">
+          <button
+            type="button"
+            onClick={() => downloadStockBill(bill)}
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-100"
+          >
+            <Download size={14} />
+            PDF
+          </button>
+        </td>
+      </tr>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -691,15 +803,25 @@ export default function StockPage() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h4 className="font-semibold text-slate-950">Wholesale Bill History</h4>
-              <p className="mt-1 text-sm text-slate-500">View previous wholesale stock bills and download them again.</p>
+              <p className="mt-1 text-sm text-slate-500">Latest wholesale stock bills. Open full history when needed.</p>
             </div>
-            <button
-              type="button"
-              onClick={() => loadBillHistory().catch((requestError) => setError(requestError.response?.data?.message || 'Bill history could not load.'))}
-              className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              Refresh
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setBillHistoryOpen(true)}
+                className="inline-flex items-center justify-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+              >
+                <History size={16} />
+                Bill History
+              </button>
+              <button
+                type="button"
+                onClick={() => loadBillHistory().catch((requestError) => setError(requestError.response?.data?.message || 'Bill history could not load.'))}
+                className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Refresh
+              </button>
+            </div>
           </div>
           <div className="mt-4 overflow-x-auto rounded-md border border-slate-200">
             <table className="min-w-[820px] w-full text-left text-sm">
@@ -715,33 +837,16 @@ export default function StockPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {billHistory.map((bill) => (
-                  <tr key={bill.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-semibold text-slate-950">{bill.bill_number}</td>
-                    <td className="px-4 py-3 text-slate-700">{bill.customer_name || '-'}</td>
-                    <td className="px-4 py-3 text-slate-700">{bill.item_count || 0}</td>
-                    <td className="px-4 py-3 text-slate-700">
-                      <span className="block font-medium">{bill.generated_by_name || '-'}</span>
-                      <span className="text-xs text-slate-500">{bill.generated_by_role || ''}</span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-700">{bill.generated_at ? new Date(bill.generated_at).toLocaleString() : '-'}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-slate-950">Rs. {Number(bill.total_amount || 0).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => downloadStockBill(bill)}
-                        className="inline-flex items-center justify-center gap-2 rounded-md bg-teal-50 px-3 py-2 text-xs font-semibold text-teal-700 hover:bg-teal-100"
-                      >
-                        <Download size={14} />
-                        PDF
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {latestBillHistory.map((bill) => renderBillHistoryRow(bill))}
               </tbody>
             </table>
             {!billHistory.length ? <p className="p-4 text-sm text-slate-500">No wholesale bills generated yet.</p> : null}
           </div>
+          {billHistory.length > 3 ? (
+            <p className="mt-3 text-xs font-medium text-slate-500">
+              Showing latest 3 of {billHistory.length} bills. Click Bill History to view all.
+            </p>
+          ) : null}
         </section>
       ) : null}
 
@@ -789,22 +894,90 @@ export default function StockPage() {
               Cancel edit
             </button>
           ) : null}
+          <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(260px,1fr)_180px_auto] lg:items-center">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input
+                className={`${inputClass} pl-10`}
+                placeholder="Search by item name or item code"
+                value={catalogMasterSearch}
+                onChange={(event) => {
+                  setCatalogMasterSearch(event.target.value);
+                  setCatalogPage(1);
+                }}
+              />
+            </div>
+            <select
+              className={inputClass}
+              value={catalogFilter}
+              onChange={(event) => {
+                setCatalogFilter(event.target.value);
+                setCatalogPage(1);
+              }}
+            >
+              <option value="all">All Items</option>
+              <option value="today">Added Today</option>
+              <option value="recent">Recently Added</option>
+            </select>
+            <p className="text-sm font-semibold text-slate-600">
+              {catalogMeta.total} item{catalogMeta.total === 1 ? '' : 's'}
+            </p>
+          </div>
           <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {catalogItems.map((item) => (
-              <div key={item.id} className="flex items-center justify-between gap-3 rounded-md border border-slate-200 px-3 py-2">
-                <div>
-                  <p className="font-semibold text-slate-950">{item.item_name}</p>
+              <div key={item.id} className="flex items-start justify-between gap-3 rounded-md border border-slate-200 px-3 py-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-semibold text-slate-950">{item.item_name}</p>
+                    {isAddedToday(item.created_at) ? (
+                      <span className="rounded-full bg-teal-50 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-teal-700">
+                        Added Today
+                      </span>
+                    ) : null}
+                  </div>
                   <p className="font-mono text-xs text-slate-500">{item.item_code}</p>
-                  <p className="text-xs font-semibold text-teal-700">Rs. {Number(item.unit_price || 0).toLocaleString()}</p>
+                  <p className="text-xs font-semibold text-teal-700">Unit price: Rs. {Number(item.unit_price || 0).toLocaleString()}</p>
+                  <p className="text-xs text-slate-500">Created: {formatCatalogDate(item.created_at)}</p>
                 </div>
-                <div className="flex gap-1">
+                <div className="flex shrink-0 gap-1">
                   <button onClick={() => startEditCatalogItem(item)} className="rounded-md p-2 text-slate-600 hover:bg-slate-100" title="Edit item"><Edit3 size={16} /></button>
                   <button onClick={() => removeCatalogItem(item)} className="rounded-md p-2 text-rose-600 hover:bg-rose-50" title="Delete item"><Trash2 size={16} /></button>
                 </div>
               </div>
             ))}
-            {!catalogItems.length ? <p className="text-sm text-slate-500">No master items added yet.</p> : null}
           </div>
+          {!catalogItems.length ? (
+            <p className="mt-4 text-sm text-slate-500">
+              {catalogMasterSearch.trim() ? 'No items found for this search.' : 'No stock items have been added yet.'}
+            </p>
+          ) : null}
+          {catalogMeta.totalPages > 1 ? (
+            <div className="mt-4 flex flex-col gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-slate-500">
+                Page {catalogMeta.page} of {catalogMeta.totalPages}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={catalogPage <= 1}
+                  onClick={() => setCatalogPage((page) => Math.max(page - 1, 1))}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"
+                >
+                  <ChevronLeft size={16} />
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  disabled={catalogPage >= catalogMeta.totalPages}
+                  onClick={() => setCatalogPage((page) => Math.min(page + 1, catalogMeta.totalPages))}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50"
+                >
+                  Next
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -921,6 +1094,53 @@ export default function StockPage() {
           </div>
         </section>
       ) : null}
+
+      <Modal title="Full Wholesale Bill History" open={billHistoryOpen} onClose={() => setBillHistoryOpen(false)} zIndex="z-50">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-sm text-slate-500">All generated wholesale stock bills are shown here.</p>
+            <p className="mt-1 text-xs font-semibold text-slate-500">
+              {filteredBillHistory.length} of {billHistory.length} bill{billHistory.length === 1 ? '' : 's'} found
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => loadBillHistory().catch((requestError) => setError(requestError.response?.data?.message || 'Bill history could not load.'))}
+            className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Refresh
+          </button>
+        </div>
+        <div className="relative mt-4">
+          <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            className={`${inputClass} pl-10`}
+            value={billHistorySearch}
+            onChange={(event) => setBillHistorySearch(event.target.value)}
+            placeholder="Search by bill no, customer, generated by, date, or amount"
+          />
+        </div>
+        <div className="mt-4 max-h-[65vh] overflow-auto rounded-md border border-slate-200">
+          <table className="min-w-[820px] w-full text-left text-sm">
+            <thead className="sticky top-0 bg-slate-50 text-xs uppercase text-slate-500">
+              <tr>
+                <th className="px-4 py-3">Bill No</th>
+                <th className="px-4 py-3">Customer</th>
+                <th className="px-4 py-3">Items</th>
+                <th className="px-4 py-3">Generated By</th>
+                <th className="px-4 py-3">Date</th>
+                <th className="px-4 py-3 text-right">Total</th>
+                <th className="px-4 py-3 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredBillHistory.map((bill) => renderBillHistoryRow(bill))}
+            </tbody>
+          </table>
+          {!billHistory.length ? <p className="p-4 text-sm text-slate-500">No wholesale bills generated yet.</p> : null}
+          {billHistory.length && !filteredBillHistory.length ? <p className="p-4 text-sm text-slate-500">No bills found for this search.</p> : null}
+        </div>
+      </Modal>
 
       <Modal title={editingBranch ? 'Edit Branch' : 'Add Branch'} open={branchModalOpen} onClose={() => setBranchModalOpen(false)}>
         <form onSubmit={saveBranch} className="grid gap-4 sm:grid-cols-2">
