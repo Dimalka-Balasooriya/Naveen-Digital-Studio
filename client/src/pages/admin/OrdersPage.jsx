@@ -31,6 +31,7 @@ const emptyForm = {
   is_future_order: false,
   future_needed_date: '',
   future_note: '',
+  is_wholesale: false,
   order_quantity: 1,
   total_amount: 0,
   advance_amount: 0,
@@ -47,6 +48,8 @@ const emptySubOrder = {
   design_notes: ''
 };
 
+const ORDERS_PAGE_SIZE = 50;
+
 function isCancelledStatus(statusName) {
   return ['cancel', 'cancelled', 'canceled'].includes(String(statusName || '').trim().toLowerCase());
 }
@@ -59,6 +62,7 @@ export default function OrdersPage() {
   const { user } = useAuth();
   const isCoAdmin = normalizeRole(user?.role) === 'CO_ADMIN';
   const [orders, setOrders] = useState([]);
+  const [orderPagination, setOrderPagination] = useState({ page: 1, limit: ORDERS_PAGE_SIZE, total: 0, totalPages: 1 });
   const [lookups, setLookups] = useState({ products: [], pages: [], couriers: [], statuses: [], filterStatuses: [], employees: [] });
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -87,6 +91,11 @@ export default function OrdersPage() {
   const [payingCommissionId, setPayingCommissionId] = useState(null);
   const [orderPrintSize, setOrderPrintSize] = useState('A4');
   const [subOrders, setSubOrders] = useState([]);
+  const [orderTypeFilter, setOrderTypeFilter] = useState('');
+  const [wholesaleItems, setWholesaleItems] = useState([]);
+  const [wholesaleDraft, setWholesaleDraft] = useState({ search: '', selected: null, quantity: 1, unit_price: 0 });
+  const [wholesaleSuggestions, setWholesaleSuggestions] = useState([]);
+  const [savingWholesaleBill, setSavingWholesaleBill] = useState(false);
 
   const productionEmployees = useMemo(
     () => lookups.employees.filter((employee) => ['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'].includes(employee.role) && employee.is_active),
@@ -113,7 +122,8 @@ export default function OrdersPage() {
       total_amount: group.orders.reduce((sum, order) => sum + Number(order.total_amount || 0), 0),
       total_quantity: group.orders.reduce((sum, order) => sum + Number(order.order_quantity || 1), 0),
       has_fast: group.orders.some((order) => order.is_fast),
-      has_future: group.orders.some((order) => order.is_future_order)
+      has_future: group.orders.some((order) => order.is_future_order),
+      has_wholesale: group.orders.some((order) => order.is_wholesale)
     }));
   }, [orders]);
 
@@ -123,6 +133,8 @@ export default function OrdersPage() {
     const nextAssignedOnly = overrides.assignedOnly ?? assignedOnly;
     const nextFromDate = overrides.fromDate ?? fromDate;
     const nextToDate = overrides.toDate ?? toDate;
+    const nextOrderType = overrides.orderTypeFilter ?? orderTypeFilter;
+    const nextPage = overrides.page ?? orderPagination.page ?? 1;
 
     return {
       search: nextSearch || undefined,
@@ -130,8 +142,37 @@ export default function OrdersPage() {
       assigned_only: nextAssignedOnly ? 'true' : undefined,
       from_date: nextFromDate || undefined,
       to_date: nextToDate || undefined,
+      order_type: nextOrderType || undefined,
+      page: nextPage,
+      limit: ORDERS_PAGE_SIZE,
       _: Date.now()
     };
+  }
+
+  function unpackOrdersResponse(data) {
+    const list = Array.isArray(data) ? data : (Array.isArray(data?.orders) ? data.orders : []);
+    const pagination = data?.pagination || {
+      page: 1,
+      limit: ORDERS_PAGE_SIZE,
+      total: list.length,
+      totalPages: 1
+    };
+    return {
+      list,
+      pagination: {
+        page: Number(pagination.page || 1),
+        limit: Number(pagination.limit || ORDERS_PAGE_SIZE),
+        total: Number(pagination.total || list.length),
+        totalPages: Math.max(Number(pagination.totalPages || 1), 1)
+      }
+    };
+  }
+
+  function setOrdersFromResponse(data) {
+    const { list, pagination } = unpackOrdersResponse(data);
+    setOrders(list);
+    setOrderPagination(pagination);
+    return { list, pagination };
   }
 
   async function loadLookups() {
@@ -152,13 +193,15 @@ export default function OrdersPage() {
     try {
       const [ordersRes, assignedCountRes] = await Promise.all([
         api.get('/orders', { params: orderFilterParams() }),
-        isCoAdmin ? api.get('/orders', { params: { assigned_only: 'true', _: Date.now() } }) : Promise.resolve({ data: [] }),
+        isCoAdmin ? api.get('/orders', { params: { assigned_only: 'true', page: 1, limit: 1, _: Date.now() } }) : Promise.resolve({ data: [] }),
         loadLookups()
       ]);
-      setOrders(Array.isArray(ordersRes.data) ? ordersRes.data : []);
-      setAssignedOrdersCount(Array.isArray(assignedCountRes.data) ? assignedCountRes.data.length : 0);
+      setOrdersFromResponse(ordersRes.data);
+      const assignedPayload = unpackOrdersResponse(assignedCountRes.data);
+      setAssignedOrdersCount(assignedPayload.pagination.total);
     } catch (requestError) {
       setOrders([]);
+      setOrderPagination({ page: 1, limit: ORDERS_PAGE_SIZE, total: 0, totalPages: 1 });
       setError(requestError.response?.data?.message || requestError.message || 'Orders could not be loaded.');
     }
   }
@@ -167,12 +210,123 @@ export default function OrdersPage() {
     load();
   }, []);
 
+  const wholesaleSummary = useMemo(() => ({
+    totalQuantity: wholesaleItems.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+    totalAmount: wholesaleItems.reduce((sum, item) => sum + Number(item.line_total ?? (Number(item.quantity || 0) * Number(item.unit_price || 0))), 0)
+  }), [wholesaleItems]);
+
+  useEffect(() => {
+    const term = wholesaleDraft.search.trim();
+    if (!form.is_wholesale || term.length < 2) {
+      setWholesaleSuggestions([]);
+      return undefined;
+    }
+    const timeout = setTimeout(async () => {
+      try {
+        const { data } = await api.get('/stock/bill-items', { params: { search: term, _: Date.now() } });
+        setWholesaleSuggestions(Array.isArray(data) ? data : []);
+      } catch {
+        setWholesaleSuggestions([]);
+      }
+    }, 250);
+    return () => clearTimeout(timeout);
+  }, [form.is_wholesale, wholesaleDraft.search]);
+
+  function resetWholesaleDraft() {
+    setWholesaleDraft({ search: '', selected: null, quantity: 1, unit_price: 0 });
+    setWholesaleSuggestions([]);
+  }
+
+  function selectWholesaleSuggestion(item) {
+    setWholesaleDraft({
+      search: `${item.item_name} (${item.item_code || 'No code'})${item.branch_name ? ` - ${item.branch_name}` : ''}`,
+      selected: item,
+      quantity: 1,
+      unit_price: Number(item.unit_price || 0)
+    });
+    setWholesaleSuggestions([]);
+  }
+
+  function addWholesaleItem({ custom = false } = {}) {
+    const quantity = Math.max(1, Number(wholesaleDraft.quantity || 1));
+    const unitPrice = Math.max(0, Number(wholesaleDraft.unit_price || 0));
+    const selected = custom ? null : wholesaleDraft.selected;
+    const typedName = wholesaleDraft.search.trim();
+    if (!selected && !typedName) {
+      setError('Select an item or type a custom wholesale item name.');
+      return;
+    }
+    const nextItem = {
+      stock_item_id: selected?.id || null,
+      catalog_item_id: selected?.catalog_item_id || null,
+      item_name: selected?.item_name || typedName,
+      item_code: selected?.item_code || '',
+      branch_name: selected?.branch_name || '',
+      branch_code: selected?.branch_code || '',
+      quantity,
+      unit_price: unitPrice,
+      line_total: quantity * unitPrice
+    };
+    setWholesaleItems((items) => [nextItem, ...items]);
+    resetWholesaleDraft();
+  }
+
+  function removeWholesaleItem(index) {
+    setWholesaleItems((items) => items.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  function getWholesalePayloadItems() {
+    return wholesaleItems.map((item) => ({
+      stock_item_id: item.stock_item_id ? Number(item.stock_item_id) : null,
+      catalog_item_id: item.catalog_item_id ? Number(item.catalog_item_id) : null,
+      item_name: item.item_name,
+      item_code: item.item_code || null,
+      branch_name: item.branch_name || null,
+      branch_code: item.branch_code || null,
+      quantity: Number(item.quantity || 1),
+      unit_price: Number(item.unit_price || 0)
+    }));
+  }
+
+  async function createWholesaleBillForCreatedOrder(orderResponse, items) {
+    const createdOrder = orderResponse?.order || orderResponse;
+    if (!createdOrder?.id || !items?.length) return null;
+
+    const customerName = `${createdOrder.customer_name || form.customer_name || ''}${
+      createdOrder.customer_phone || form.customer_phone ? ` ${createdOrder.customer_phone || form.customer_phone}` : ''
+    }`.trim();
+
+    const { data } = await api.post('/stock/wholesale-bills', {
+      order_id: createdOrder.id,
+      customer_name: customerName,
+      note: `Generated from order ${createdOrder.order_number || ''}`.trim(),
+      items: items.map((item) => ({
+        stock_item_id: item.stock_item_id || null,
+        catalog_item_id: item.catalog_item_id || null,
+        item_name: item.item_name,
+        item_code: item.item_code || '',
+        branch_name: item.branch_name || '',
+        branch_code: item.branch_code || '',
+        quantity: Number(item.quantity || 1),
+        unit_price: Number(item.unit_price || 0)
+      }))
+    });
+
+    return data;
+  }
+
   async function submit(event) {
     event.preventDefault();
     if (savingOrder) return;
     setSavingOrder(true);
     setError('');
     setNotice('');
+    const wholesalePayloadItems = form.is_wholesale ? getWholesalePayloadItems() : [];
+    if (form.is_wholesale && !wholesalePayloadItems.length) {
+      setError('Add at least one wholesale item before saving this order.');
+      setSavingOrder(false);
+      return;
+    }
     const payload = {
       ...form,
       product_id: form.product_id ? Number(form.product_id) : null,
@@ -191,8 +345,10 @@ export default function OrdersPage() {
       is_future_order: Boolean(form.is_future_order),
       future_needed_date: form.is_future_order ? (form.future_needed_date || form.needed_date || null) : null,
       future_note: form.is_future_order ? (form.future_note?.trim() || null) : null,
-      order_quantity: Number(form.order_quantity || 1),
-      total_amount: Number(form.total_amount),
+      is_wholesale: Boolean(form.is_wholesale),
+      wholesale_items: form.is_wholesale ? wholesalePayloadItems : undefined,
+      order_quantity: form.is_wholesale ? wholesaleSummary.totalQuantity : Number(form.order_quantity || 1),
+      total_amount: form.is_wholesale ? wholesaleSummary.totalAmount : Number(form.total_amount),
       advance_amount: Number(form.advance_amount)
     };
     const selectedStatus = lookups.statuses.find((status) => Number(status.id) === Number(payload.status_id));
@@ -226,14 +382,14 @@ export default function OrdersPage() {
           setError('Create the order first, then change status to complete to add commissions.');
           return;
         }
-        const incompleteSubOrder = subOrders.find((subOrder) => !subOrder.product_id && !subOrder.product_name?.trim());
+        const incompleteSubOrder = form.is_wholesale ? null : subOrders.find((subOrder) => !subOrder.product_id && !subOrder.product_name?.trim());
         if (incompleteSubOrder) {
           setError('Each sub order must have a selected product or custom product name.');
           return;
         }
         const payloads = [
           payload,
-          ...subOrders.map((subOrder) => ({
+          ...(form.is_wholesale ? [] : subOrders.map((subOrder) => ({
             ...payload,
             product_id: subOrder.product_id ? Number(subOrder.product_id) : null,
             product_name: subOrder.product_name?.trim() || null,
@@ -242,19 +398,30 @@ export default function OrdersPage() {
             order_quantity: Number(subOrder.order_quantity || 1),
             total_amount: Number(subOrder.total_amount || 0),
             design_notes: subOrder.design_notes?.trim() || payload.design_notes || null
-          }))
+          })))
         ];
         const created = [];
+        const billWarnings = [];
         for (const nextPayload of payloads) {
           const { data } = await api.post('/orders', nextPayload);
+          if (nextPayload.is_wholesale && nextPayload.wholesale_items?.length) {
+            try {
+              await createWholesaleBillForCreatedOrder(data, nextPayload.wholesale_items);
+            } catch (billError) {
+              billWarnings.push(billError.response?.data?.message || 'Wholesale bill could not be generated automatically.');
+            }
+          }
           created.push(data);
         }
-        setNotice(created.length > 1 ? `${created.length} sub orders created for this customer.` : (created[0]?.message || 'Order created.'));
+        const createdMessage = created.length > 1 ? `${created.length} sub orders created for this customer.` : (created[0]?.message || 'Order created.');
+        setNotice(billWarnings.length ? `${createdMessage} ${billWarnings[0]}` : createdMessage);
       }
       setModalOpen(false);
       setEditingOrder(null);
       setForm(emptyForm);
       setSubOrders([]);
+      setWholesaleItems([]);
+      resetWholesaleDraft();
       await load();
     } catch (requestError) {
       setError(requestError.response?.data?.message || 'Order could not be saved.');
@@ -265,35 +432,55 @@ export default function OrdersPage() {
 
   async function startEdit(order) {
     await loadLookups();
-    setEditingOrder(order);
+    let sourceOrder = order;
+    try {
+      const { data } = await api.get(`/orders/${order.id}`);
+      sourceOrder = data;
+    } catch {
+      sourceOrder = order;
+    }
+    setEditingOrder(sourceOrder);
     setSubOrders([]);
+    setWholesaleItems((sourceOrder.wholesaleItems || []).map((item) => ({
+      stock_item_id: item.stock_item_id || null,
+      catalog_item_id: item.catalog_item_id || null,
+      item_name: item.item_name,
+      item_code: item.item_code || '',
+      branch_name: item.branch_name || '',
+      branch_code: item.branch_code || '',
+      quantity: Number(item.quantity || 1),
+      unit_price: Number(item.unit_price || 0),
+      line_total: Number(item.line_total || (Number(item.quantity || 1) * Number(item.unit_price || 0)))
+    })));
+    resetWholesaleDraft();
     setForm({
-      customer_name: order.customer_name || '',
-      customer_phone: order.customer_phone || '',
-      recipient_contact_number: order.recipient_contact_number || '',
-      customer_address: order.customer_address || '',
+      customer_name: sourceOrder.customer_name || '',
+      customer_phone: sourceOrder.customer_phone || '',
+      recipient_contact_number: sourceOrder.recipient_contact_number || '',
+      customer_address: sourceOrder.customer_address || '',
       customer_notes: '',
-      product_id: order.product_id || '',
+      product_id: sourceOrder.product_id || '',
       product_name: '',
-      facebook_page_id: order.facebook_page_id || '',
-      courier_service_id: order.courier_service_id || '',
-      tracking_number: order.tracking_number || '',
-      parcel_weight: order.parcel_weight || '1kg',
-      status_id: order.status_id || '',
-      assigned_employee_id: order.assigned_employee_id || '',
-      commission_amount: order.current_commission_amount || 0,
-      production_commission_amount: order.current_commission_amount || 0,
-      co_admin_id: order.assigned_co_admin_id || order.current_co_admin_id || '',
-      co_admin_commission_amount: order.current_co_admin_commission_amount || 0,
-      needed_date: order.needed_date?.slice(0, 10) || '',
-      is_fast: Boolean(order.is_fast),
-      is_future_order: Boolean(order.is_future_order),
-      future_needed_date: order.future_needed_date?.slice(0, 10) || '',
-      future_note: order.future_note || '',
-      order_quantity: order.order_quantity || order.quantity || 1,
-      total_amount: order.total_amount || 0,
-      advance_amount: order.advance_amount || 0,
-      design_notes: order.design_notes || ''
+      facebook_page_id: sourceOrder.facebook_page_id || '',
+      courier_service_id: sourceOrder.courier_service_id || '',
+      tracking_number: sourceOrder.tracking_number || '',
+      parcel_weight: sourceOrder.parcel_weight || '1kg',
+      status_id: sourceOrder.status_id || '',
+      assigned_employee_id: sourceOrder.assigned_employee_id || '',
+      commission_amount: sourceOrder.current_commission_amount || 0,
+      production_commission_amount: sourceOrder.current_commission_amount || 0,
+      co_admin_id: sourceOrder.assigned_co_admin_id || sourceOrder.current_co_admin_id || '',
+      co_admin_commission_amount: sourceOrder.current_co_admin_commission_amount || 0,
+      needed_date: sourceOrder.needed_date?.slice(0, 10) || '',
+      is_fast: Boolean(sourceOrder.is_fast),
+      is_future_order: Boolean(sourceOrder.is_future_order),
+      future_needed_date: sourceOrder.future_needed_date?.slice(0, 10) || '',
+      future_note: sourceOrder.future_note || '',
+      is_wholesale: Boolean(sourceOrder.is_wholesale),
+      order_quantity: sourceOrder.order_quantity || sourceOrder.quantity || 1,
+      total_amount: sourceOrder.total_amount || 0,
+      advance_amount: sourceOrder.advance_amount || 0,
+      design_notes: sourceOrder.design_notes || ''
     });
     setModalOpen(true);
   }
@@ -303,6 +490,8 @@ export default function OrdersPage() {
     setEditingOrder(null);
     setForm(emptyForm);
     setSubOrders([]);
+    setWholesaleItems([]);
+    resetWholesaleDraft();
     setError('');
     setModalOpen(true);
   }
@@ -521,6 +710,61 @@ export default function OrdersPage() {
     URL.revokeObjectURL(url);
   }
 
+  async function downloadWholesaleBill(billId) {
+    if (!billId) return;
+    setError('');
+    try {
+      const { data } = await api.get(`/stock/wholesale-bills/${billId}/pdf`, { responseType: 'blob' });
+      const blob = new Blob([data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `wholesale-bill-${billId}.pdf`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Wholesale bill could not be downloaded.');
+    }
+  }
+
+  async function generateWholesaleBillFromOrder(order, allowRevision = false) {
+    if (!order?.id || savingWholesaleBill) return;
+    const items = order.wholesaleItems || [];
+    if (!items.length) {
+      setError('This wholesale order has no wholesale items.');
+      return;
+    }
+    setSavingWholesaleBill(true);
+    setError('');
+    try {
+      const { data } = await api.post('/stock/wholesale-bills', {
+        order_id: order.id,
+        allow_revision: allowRevision,
+        customer_name: `${order.customer_name || ''}${order.customer_phone ? ` ${order.customer_phone}` : ''}`.trim(),
+        note: `Generated from order ${order.order_number}`,
+        items: items.map((item) => ({
+          stock_item_id: item.stock_item_id || null,
+          item_name: item.item_name,
+          item_code: item.item_code || '',
+          branch_name: item.branch_name || '',
+          branch_code: item.branch_code || '',
+          quantity: Number(item.quantity || 1),
+          unit_price: Number(item.unit_price || 0)
+        }))
+      });
+      setNotice(data.message || 'Wholesale bill generated successfully.');
+      const refreshed = await api.get(`/orders/${order.id}`);
+      setDetailOrder(refreshed.data);
+      await load();
+      if (data.id) await downloadWholesaleBill(data.id);
+    } catch (requestError) {
+      const message = requestError.response?.data?.message || 'Wholesale bill could not be generated.';
+      setError(message);
+    } finally {
+      setSavingWholesaleBill(false);
+    }
+  }
+
   function escapeHtml(value) {
     return String(value ?? '')
       .replaceAll('&', '&amp;')
@@ -728,13 +972,14 @@ export default function OrdersPage() {
     setError('');
     try {
       const [ordersRes, customersRes] = await Promise.all([
-        api.get('/orders', { params: orderFilterParams() }),
+        api.get('/orders', { params: orderFilterParams({ page: 1 }) }),
         search ? api.get('/customers/search', { params: { q: search } }) : Promise.resolve({ data: [] })
       ]);
-      setOrders(Array.isArray(ordersRes.data) ? ordersRes.data : []);
+      setOrdersFromResponse(ordersRes.data);
       setCustomerHistory(Array.isArray(customersRes.data) ? customersRes.data : []);
     } catch (requestError) {
       setOrders([]);
+      setOrderPagination({ page: 1, limit: ORDERS_PAGE_SIZE, total: 0, totalPages: 1 });
       setCustomerHistory([]);
       setError(requestError.response?.data?.message || requestError.message || 'Search could not be completed.');
     }
@@ -745,12 +990,28 @@ export default function OrdersPage() {
     setError('');
     try {
       const { data } = await api.get('/orders', {
-        params: orderFilterParams({ statusFilter: value })
+        params: orderFilterParams({ statusFilter: value, page: 1 })
       });
-      setOrders(Array.isArray(data) ? data : []);
+      setOrdersFromResponse(data);
     } catch (requestError) {
       setOrders([]);
+      setOrderPagination({ page: 1, limit: ORDERS_PAGE_SIZE, total: 0, totalPages: 1 });
       setError(requestError.response?.data?.message || requestError.message || 'Orders could not be filtered.');
+    }
+  }
+
+  async function applyOrderTypeFilter(value) {
+    setOrderTypeFilter(value);
+    setError('');
+    try {
+      const { data } = await api.get('/orders', {
+        params: orderFilterParams({ orderTypeFilter: value, page: 1 })
+      });
+      setOrdersFromResponse(data);
+    } catch (requestError) {
+      setOrders([]);
+      setOrderPagination({ page: 1, limit: ORDERS_PAGE_SIZE, total: 0, totalPages: 1 });
+      setError(requestError.response?.data?.message || requestError.message || 'Orders could not be filtered by type.');
     }
   }
 
@@ -760,11 +1021,13 @@ export default function OrdersPage() {
     setError('');
     try {
       const { data } = await api.get('/orders', {
-        params: orderFilterParams({ assignedOnly: onlyMine })
+        params: orderFilterParams({ assignedOnly: onlyMine, page: 1 })
       });
-      setOrders(Array.isArray(data) ? data : []);
+      const { pagination } = setOrdersFromResponse(data);
+      if (onlyMine) setAssignedOrdersCount(pagination.total);
     } catch (requestError) {
       setOrders([]);
+      setOrderPagination({ page: 1, limit: ORDERS_PAGE_SIZE, total: 0, totalPages: 1 });
       setError(requestError.response?.data?.message || requestError.message || 'Orders could not be filtered.');
     }
   }
@@ -773,12 +1036,26 @@ export default function OrdersPage() {
     setError('');
     try {
       const { data } = await api.get('/orders', {
-        params: orderFilterParams({ fromDate: nextFromDate, toDate: nextToDate })
+        params: orderFilterParams({ fromDate: nextFromDate, toDate: nextToDate, page: 1 })
       });
-      setOrders(Array.isArray(data) ? data : []);
+      setOrdersFromResponse(data);
     } catch (requestError) {
       setOrders([]);
+      setOrderPagination({ page: 1, limit: ORDERS_PAGE_SIZE, total: 0, totalPages: 1 });
       setError(requestError.response?.data?.message || requestError.message || 'Orders could not be filtered by date.');
+    }
+  }
+
+  async function changeOrdersPage(nextPage) {
+    const safePage = Math.min(Math.max(nextPage, 1), orderPagination.totalPages || 1);
+    setError('');
+    try {
+      const { data } = await api.get('/orders', {
+        params: orderFilterParams({ page: safePage })
+      });
+      setOrdersFromResponse(data);
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || requestError.message || 'Orders page could not be loaded.');
     }
   }
 
@@ -866,6 +1143,15 @@ export default function OrdersPage() {
             <option key={status.id} value={status.name}>{titleCase(status.name)}</option>
           ))}
         </select>
+        <select
+          className={`${inputClass} sm:w-48`}
+          value={orderTypeFilter}
+          onChange={(event) => applyOrderTypeFilter(event.target.value)}
+        >
+          <option value="">All Types</option>
+          <option value="wholesale">Wholesale Orders</option>
+          <option value="other">Other Orders</option>
+        </select>
         <button onClick={openCreateOrder} className="flex items-center justify-center gap-2 rounded-md bg-studio-mint px-4 py-2 text-sm font-semibold text-white">
           <Plus size={17} />
           New Order
@@ -921,6 +1207,7 @@ export default function OrdersPage() {
                         <span className="ml-2 rounded bg-white px-2 py-0.5 text-xs text-teal-700">{group.orders.length} sub orders</span>
                         {group.has_fast ? <span className="ml-2 rounded bg-orange-100 px-2 py-0.5 text-xs text-orange-700">Fast</span> : null}
                         {group.has_future ? <span className="ml-2 rounded bg-sky-100 px-2 py-0.5 text-xs text-sky-700">Future</span> : null}
+                        {group.has_wholesale ? <span className="ml-2 rounded bg-purple-100 px-2 py-0.5 text-xs text-purple-700">Wholesale</span> : null}
                       </td>
                       <td className="px-4 py-3">
                         <p className="font-semibold text-teal-950">{group.customer_name}</p>
@@ -943,6 +1230,7 @@ export default function OrdersPage() {
                         {order.order_number}
                         {order.is_fast ? <span className="ml-2 rounded bg-orange-100 px-2 py-0.5 text-xs text-orange-700">Fast</span> : null}
                         {order.is_future_order ? <span className="ml-2 rounded bg-sky-100 px-2 py-0.5 text-xs text-sky-700">Future</span> : null}
+                        {order.is_wholesale ? <span className="ml-2 rounded bg-purple-100 px-2 py-0.5 text-xs text-purple-700">Wholesale</span> : null}
                       </td>
                       <td className="px-4 py-3">
                         <p className="font-medium text-slate-900">{order.customer_name}</p>
@@ -980,6 +1268,36 @@ export default function OrdersPage() {
             </tbody>
           </table>
         </div>
+        <div className="flex flex-col gap-3 border-t border-slate-200 px-4 py-3 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            Showing {orders.length ? ((orderPagination.page - 1) * orderPagination.limit) + 1 : 0}
+            {' - '}
+            {Math.min(orderPagination.page * orderPagination.limit, orderPagination.total)}
+            {' of '}
+            {orderPagination.total}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={orderPagination.page <= 1}
+              onClick={() => changeOrdersPage(orderPagination.page - 1)}
+              className="rounded-md border border-slate-200 px-3 py-1.5 font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <span className="font-semibold text-slate-800">
+              Page {orderPagination.page} of {orderPagination.totalPages}
+            </span>
+            <button
+              type="button"
+              disabled={orderPagination.page >= orderPagination.totalPages}
+              onClick={() => changeOrdersPage(orderPagination.page + 1)}
+              className="rounded-md border border-slate-200 px-3 py-1.5 font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+        </div>
       </div>
 
       <Modal title={editingOrder ? 'Edit Order' : 'Create Order'} open={modalOpen} onClose={() => setModalOpen(false)}>
@@ -1007,10 +1325,26 @@ export default function OrdersPage() {
           <Field label="Status"><select className={inputClass} value={form.status_id} onChange={(event) => setForm({ ...form, status_id: event.target.value })} required><option value="">Select</option>{lookups.statuses.map((item) => <option key={item.id} value={item.id}>{titleCase(item.name)}</option>)}</select></Field>
           <Field label="Assigned employee"><select className={inputClass} value={form.assigned_employee_id} onChange={(event) => setForm({ ...form, assigned_employee_id: event.target.value })}><option value="">Unassigned</option>{productionEmployees.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
           <Field label="CO_ADMIN for completion commission"><select className={inputClass} value={form.co_admin_id} onChange={(event) => setForm({ ...form, co_admin_id: event.target.value })}><option value="">Order creator / logged-in CO_ADMIN</option>{coAdmins.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-          <Field label="Order Quantity"><input type="number" min="1" required className={inputClass} value={form.order_quantity} onChange={(event) => setForm({ ...form, order_quantity: event.target.value })} /></Field>
-          <Field label="Total amount"><input type="number" min="0" className={inputClass} value={form.total_amount} onChange={(event) => setForm({ ...form, total_amount: event.target.value })} /></Field>
+          <Field label="Order Quantity"><input type="number" min="1" required className={inputClass} value={form.is_wholesale ? wholesaleSummary.totalQuantity || 1 : form.order_quantity} readOnly={form.is_wholesale} onChange={(event) => setForm({ ...form, order_quantity: event.target.value })} /></Field>
+          <Field label="Total amount"><input type="number" min="0" className={inputClass} value={form.is_wholesale ? wholesaleSummary.totalAmount : form.total_amount} readOnly={form.is_wholesale} onChange={(event) => setForm({ ...form, total_amount: event.target.value })} /></Field>
           <Field label="Advance amount"><input type="number" min="0" className={inputClass} value={form.advance_amount} onChange={(event) => setForm({ ...form, advance_amount: event.target.value })} /></Field>
           <label className="flex items-center gap-2 pt-7 text-sm font-medium text-slate-700"><input type="checkbox" checked={form.is_fast} onChange={(event) => setForm({ ...form, is_fast: event.target.checked })} /> Fast order</label>
+          <label className="flex items-center gap-2 pt-7 text-sm font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={form.is_wholesale}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setForm({ ...form, is_wholesale: checked });
+                if (checked) setSubOrders([]);
+                if (!checked) {
+                  setWholesaleItems([]);
+                  resetWholesaleDraft();
+                }
+              }}
+            />
+            Wholesale order
+          </label>
           <label className="flex items-center gap-2 pt-7 text-sm font-medium text-slate-700">
             <input
               type="checkbox"
@@ -1036,7 +1370,88 @@ export default function OrdersPage() {
               </div>
             </>
           ) : null}
-          {!editingOrder ? (
+          {form.is_wholesale ? (
+            <div className="sm:col-span-2 rounded-md border border-purple-100 bg-purple-50/60 p-4">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h4 className="font-semibold text-slate-950">Wholesale Items</h4>
+                  <p className="text-sm text-slate-600">Search stock item by name/code, or type a custom item. Stock quantity will not reduce automatically.</p>
+                </div>
+                <div className="rounded bg-white px-3 py-2 text-sm font-semibold text-purple-800">
+                  Qty {wholesaleSummary.totalQuantity || 0} · Rs. {Number(wholesaleSummary.totalAmount || 0).toLocaleString()}
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_120px_150px_auto]">
+                <div className="relative">
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Item name or item code</label>
+                  <input
+                    className={`${inputClass} mt-1`}
+                    value={wholesaleDraft.search}
+                    onChange={(event) => setWholesaleDraft({ ...wholesaleDraft, search: event.target.value, selected: null })}
+                    placeholder="Search saved item or type custom"
+                  />
+                  {wholesaleSuggestions.length ? (
+                    <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-md border border-slate-200 bg-white shadow-lg">
+                      {wholesaleSuggestions.map((item) => (
+                        <button
+                          key={`${item.id}-${item.branch_id || 'catalog'}`}
+                          type="button"
+                          onClick={() => selectWholesaleSuggestion(item)}
+                          className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm hover:bg-teal-50"
+                        >
+                          <span className="font-semibold text-slate-950">{item.item_name}</span>
+                          <span className="ml-2 text-slate-500">{item.item_code || 'No code'}</span>
+                          <span className="block text-xs text-slate-500">{item.branch_name || 'Catalog'} · Rs. {Number(item.unit_price || 0).toLocaleString()}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Qty</label>
+                  <input type="number" min="1" className={`${inputClass} mt-1`} value={wholesaleDraft.quantity} onChange={(event) => setWholesaleDraft({ ...wholesaleDraft, quantity: event.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Unit Price</label>
+                  <input type="number" min="0" className={`${inputClass} mt-1`} value={wholesaleDraft.unit_price} onChange={(event) => setWholesaleDraft({ ...wholesaleDraft, unit_price: event.target.value })} />
+                </div>
+                <div className="flex items-end gap-2">
+                  <button type="button" onClick={() => addWholesaleItem()} className="rounded-md border border-teal-300 bg-white px-3 py-2 text-sm font-semibold text-teal-800 hover:bg-teal-50">
+                    Add Item
+                  </button>
+                  <button type="button" onClick={() => addWholesaleItem({ custom: true })} className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                    Custom
+                  </button>
+                </div>
+              </div>
+              <div className="mt-4 overflow-hidden rounded-md border border-slate-200 bg-white">
+                <table className="min-w-[760px] w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                    <tr><th className="px-3 py-2">Item</th><th className="px-3 py-2">Code</th><th className="px-3 py-2">Branch</th><th className="px-3 py-2">Qty</th><th className="px-3 py-2">Unit Price</th><th className="px-3 py-2">Line Total</th><th className="px-3 py-2 text-right">Action</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {wholesaleItems.map((item, index) => (
+                      <tr key={`${item.item_name}-${index}`}>
+                        <td className="px-3 py-2 font-semibold text-slate-950">{item.item_name}</td>
+                        <td className="px-3 py-2">{item.item_code || '-'}</td>
+                        <td className="px-3 py-2">{item.branch_name || item.branch_code || 'Custom'}</td>
+                        <td className="px-3 py-2">{item.quantity}</td>
+                        <td className="px-3 py-2">Rs. {Number(item.unit_price || 0).toLocaleString()}</td>
+                        <td className="px-3 py-2 font-semibold">Rs. {Number(item.line_total ?? (Number(item.quantity || 0) * Number(item.unit_price || 0))).toLocaleString()}</td>
+                        <td className="px-3 py-2 text-right">
+                          <button type="button" onClick={() => removeWholesaleItem(index)} className="rounded-md p-2 text-rose-600 hover:bg-rose-50"><Trash2 size={16} /></button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!wholesaleItems.length ? (
+                      <tr><td colSpan="7" className="px-3 py-5 text-center text-slate-500">No wholesale items added yet.</td></tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+          {!editingOrder && !form.is_wholesale ? (
             <div className="sm:col-span-2 rounded-md border border-teal-100 bg-teal-50/60 p-4">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
@@ -1358,7 +1773,10 @@ export default function OrdersPage() {
             <div><p className="text-slate-500">Address</p><p className="font-semibold">{detailOrder.customer_address || 'No address'}</p></div>
             <div>
               <p className="text-slate-500">Order</p>
-              <p className="font-semibold">{detailOrder.product_name}</p>
+              <p className="font-semibold">
+                {detailOrder.product_name}
+                {detailOrder.is_wholesale ? <span className="ml-2 rounded bg-purple-100 px-2 py-0.5 text-xs text-purple-700">Wholesale</span> : null}
+              </p>
               <p>FB: {detailOrder.facebook_page_name || 'No Facebook page'}</p>
               <p>FB WhatsApp: {detailOrder.facebook_page_whatsapp_number || 'Not added'}</p>
               <p>Courier: {detailOrder.courier_service_name || 'Not selected'}</p>
@@ -1379,6 +1797,70 @@ export default function OrdersPage() {
             <div><p className="text-slate-500">Updated</p><p className="font-semibold">{detailOrder.updated_at ? new Date(detailOrder.updated_at).toLocaleString() : '-'}</p></div>
             <button onClick={() => showCustomerProfile(detailOrder)} className="rounded-md bg-teal-600 px-3 py-2 text-sm font-semibold text-white sm:col-span-2 lg:col-span-4">Open Customer Profile</button>
           </div>
+        ) : null}
+        {detailOrder?.is_wholesale ? (
+          <section className="mb-5 rounded-md border border-purple-100 bg-purple-50/60 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h4 className="font-semibold text-slate-950">Wholesale Items</h4>
+                <p className="text-sm text-slate-600">
+                  Qty {(detailOrder.wholesaleItems || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0)} · Rs. {Number(detailOrder.total_amount || 0).toLocaleString()}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {detailOrder.linkedWholesaleBill || detailOrder.wholesale_bill_id ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => downloadWholesaleBill(detailOrder.linkedWholesaleBill?.id || detailOrder.wholesale_bill_id)}
+                      className="inline-flex items-center gap-2 rounded-md bg-slate-950 px-3 py-2 text-sm font-semibold text-white"
+                    >
+                      <Download size={16} /> Download Bill
+                    </button>
+                    <button
+                      type="button"
+                      disabled={savingWholesaleBill}
+                      onClick={() => generateWholesaleBillFromOrder(detailOrder, true)}
+                      className="inline-flex items-center gap-2 rounded-md border border-purple-200 px-3 py-2 text-sm font-semibold text-purple-700 disabled:opacity-60"
+                    >
+                      <ReceiptText size={16} /> Create Revised Bill
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={savingWholesaleBill}
+                    onClick={() => generateWholesaleBillFromOrder(detailOrder)}
+                    className="inline-flex items-center gap-2 rounded-md bg-purple-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                  >
+                    <ReceiptText size={16} /> {savingWholesaleBill ? 'Generating...' : 'Generate Wholesale Bill'}
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="mt-3 overflow-x-auto">
+              <table className="min-w-[760px] w-full text-left text-sm">
+                <thead className="bg-white/70 text-xs uppercase text-slate-500">
+                  <tr><th className="px-3 py-2">Item</th><th className="px-3 py-2">Code</th><th className="px-3 py-2">Branch</th><th className="px-3 py-2">Qty</th><th className="px-3 py-2">Unit Price</th><th className="px-3 py-2">Total</th></tr>
+                </thead>
+                <tbody className="divide-y divide-purple-100 bg-white/60">
+                  {(detailOrder.wholesaleItems || []).map((item) => (
+                    <tr key={item.id}>
+                      <td className="px-3 py-2 font-semibold">{item.item_name}</td>
+                      <td className="px-3 py-2">{item.item_code || '-'}</td>
+                      <td className="px-3 py-2">{item.branch_name || '-'}</td>
+                      <td className="px-3 py-2">{item.quantity}</td>
+                      <td className="px-3 py-2">Rs. {Number(item.unit_price || 0).toLocaleString()}</td>
+                      <td className="px-3 py-2 font-semibold">Rs. {Number(item.line_total || 0).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                  {!detailOrder.wholesaleItems?.length ? (
+                    <tr><td colSpan="6" className="px-3 py-4 text-center text-slate-500">No wholesale items saved.</td></tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </section>
         ) : null}
         <div className="grid gap-5 lg:grid-cols-4">
           <section>

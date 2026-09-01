@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BellRing, CheckCircle2, Clock, Search, Trophy, Zap } from 'lucide-react';
+import { BellRing, CheckCircle2, Clock, Download, ReceiptText, Search, Trophy, Zap } from 'lucide-react';
 import { api } from '../../services/api';
 import StatCard from '../../components/StatCard';
 import StatusBadge from '../../components/StatusBadge';
@@ -14,11 +14,14 @@ export default function ProductionDashboard() {
   const [allCommissions, setAllCommissions] = useState([]);
   const [commissionSearch, setCommissionSearch] = useState('');
   const [commissionMonth, setCommissionMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [orderStatusFilter, setOrderStatusFilter] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [wholesaleBillPreview, setWholesaleBillPreview] = useState(null);
 
-  async function load() {
+  async function load(overrides = {}) {
     setError('');
+    const nextOrderStatusFilter = overrides.orderStatusFilter ?? orderStatusFilter;
     const [
       ordersRes,
       statsRes,
@@ -27,7 +30,7 @@ export default function ProductionDashboard() {
       commissionsRes,
       allCommissionsRes
     ] = await Promise.allSettled([
-      api.get('/production/orders'),
+      api.get('/production/orders', { params: { status_id: nextOrderStatusFilter || undefined, _: Date.now() } }),
       api.get('/production/profile/stats'),
       api.get('/reminders'),
       api.get('/production/statuses'),
@@ -70,6 +73,11 @@ export default function ProductionDashboard() {
     await load();
   }
 
+  async function applyOrderStatusFilter(value) {
+    setOrderStatusFilter(value);
+    await load({ orderStatusFilter: value });
+  }
+
   async function updateStatus(order, statusId) {
     if (!statusId) return;
     const { data } = await api.patch(`/orders/${order.id}/status`, { status_id: Number(statusId), note: 'Updated by production employee' });
@@ -80,6 +88,42 @@ export default function ProductionDashboard() {
   async function markReminder(id) {
     await api.patch(`/reminders/${id}/read`);
     await load();
+  }
+
+  async function downloadWholesaleBill(billId) {
+    if (!billId) return;
+    setError('');
+    try {
+      const { data } = await api.get(`/stock/wholesale-bills/${billId}/pdf`, { responseType: 'blob' });
+      const blob = new Blob([data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `wholesale-bill-${billId}.pdf`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Wholesale bill could not be downloaded.');
+    }
+  }
+
+  async function viewWholesaleBill(billId) {
+    if (!billId) return;
+    setError('');
+    try {
+      const { data } = await api.get(`/stock/wholesale-bills/${billId}`);
+      setWholesaleBillPreview(data);
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Wholesale bill could not be opened.');
+    }
+  }
+
+  function isWholesaleOrder(order) {
+    return Boolean(
+      order?.is_wholesale
+      || order?.linked_wholesale_bill
+      || (order?.wholesale_items || []).length
+    );
   }
 
   return (
@@ -199,8 +243,21 @@ export default function ProductionDashboard() {
       ) : null}
 
       <section className="rounded-md border border-slate-200 bg-white">
-        <div className="border-b border-slate-200 p-5">
-          <h3 className="text-base font-semibold text-slate-950">Assigned Orders</h3>
+        <div className="flex flex-col gap-3 border-b border-slate-200 p-5 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-slate-950">Assigned Orders</h3>
+            <p className="text-sm text-slate-500">
+              {orderStatusFilter ? `${orders.length} order(s) in selected status` : `${orders.length} assigned order(s) visible`}
+            </p>
+          </div>
+          <select
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100 sm:w-64"
+            value={orderStatusFilter}
+            onChange={(event) => applyOrderStatusFilter(event.target.value)}
+          >
+            <option value="">All Statuses</option>
+            {statuses.map((status) => <option key={status.id} value={status.id}>{titleCase(status.name)}</option>)}
+          </select>
         </div>
         <div className="grid divide-y divide-slate-100">
           {orders.map((order) => (
@@ -212,6 +269,7 @@ export default function ProductionDashboard() {
                     <StatusBadge color={order.status_color}>{order.status_name}</StatusBadge>
                     {order.is_fast ? <span className="inline-flex items-center gap-1 rounded bg-orange-100 px-2 py-1 text-xs font-semibold text-orange-700"><Zap size={13} />Fast</span> : null}
                     {order.is_future_order ? <span className="inline-flex items-center gap-1 rounded bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-700"><Clock size={13} />Future</span> : null}
+                    {isWholesaleOrder(order) ? <span className="inline-flex items-center gap-1 rounded bg-purple-100 px-2 py-1 text-xs font-semibold text-purple-700"><ReceiptText size={13} />Wholesale</span> : null}
                   </div>
                   <p className="mt-1 text-sm text-slate-600">{order.customer_name} · {order.customer_phone} · {order.product_name} · Qty {order.order_quantity || 1}</p>
                   <p className="mt-1 flex items-center gap-1 text-xs text-slate-500"><Clock size={14} /> Needed {order.needed_date?.slice(0, 10)}</p>
@@ -221,6 +279,48 @@ export default function ProductionDashboard() {
                   </p>
                   {order.is_future_order && order.future_note ? <p className="mt-2 text-sm text-sky-800">{order.future_note}</p> : null}
                   {order.design_notes ? <p className="mt-2 text-sm text-slate-700">{order.design_notes}</p> : null}
+                  {isWholesaleOrder(order) ? (
+                    <div className="mt-3 rounded-md border border-purple-100 bg-purple-50/70 p-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">Wholesale Items</p>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        {(order.wholesale_items || []).map((item) => (
+                          <div key={item.id} className="rounded border border-purple-100 bg-white px-3 py-2 text-sm">
+                            <p className="font-semibold text-slate-950">{item.item_name}</p>
+                            <p className="text-xs text-slate-500">{item.item_code || '-'} - {item.branch_name || 'No branch'} - Qty {item.quantity}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-3 rounded-md border border-purple-100 bg-white p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">Wholesale Bill</p>
+                        {order.linked_wholesale_bill ? (
+                          <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="text-sm text-slate-600">
+                              <p className="font-semibold text-slate-950">{order.linked_wholesale_bill.bill_number}</p>
+                              <p>Rs. {Number(order.linked_wholesale_bill.total_amount || 0).toLocaleString()} · {order.linked_wholesale_bill.generated_at ? new Date(order.linked_wholesale_bill.generated_at).toLocaleString() : 'Generated'}</p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => viewWholesaleBill(order.linked_wholesale_bill.id)}
+                                className="inline-flex items-center gap-2 rounded-md border border-purple-200 px-3 py-2 text-xs font-semibold text-purple-700"
+                              >
+                                <ReceiptText size={14} /> View Bill
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => downloadWholesaleBill(order.linked_wholesale_bill.id)}
+                                className="inline-flex items-center gap-2 rounded-md bg-purple-700 px-3 py-2 text-xs font-semibold text-white"
+                              >
+                                <Download size={14} /> Download PDF
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-sm text-slate-500">Wholesale bill has not been generated yet.</p>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="w-full lg:w-72">
                   <select
@@ -256,6 +356,77 @@ export default function ProductionDashboard() {
           ) : null}
         </div>
       </section>
+      {wholesaleBillPreview ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+          <div className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 p-5">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">Wholesale Bill</p>
+                <h3 className="text-lg font-semibold text-slate-950">{wholesaleBillPreview.bill_number}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWholesaleBillPreview(null)}
+                className="rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600"
+              >
+                Close
+              </button>
+            </div>
+            <div className="space-y-4 p-5">
+              <div className="grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm sm:grid-cols-2">
+                <div>
+                  <p className="text-slate-500">Order</p>
+                  <p className="font-semibold text-slate-950">{wholesaleBillPreview.order_number || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-slate-500">Customer</p>
+                  <p className="font-semibold text-slate-950">{wholesaleBillPreview.customer_name || '-'}</p>
+                  {wholesaleBillPreview.customer_phone ? <p className="text-slate-500">{wholesaleBillPreview.customer_phone}</p> : null}
+                </div>
+                <div>
+                  <p className="text-slate-500">Generated</p>
+                  <p className="font-semibold text-slate-950">{wholesaleBillPreview.generated_at ? new Date(wholesaleBillPreview.generated_at).toLocaleString() : '-'}</p>
+                </div>
+                <div>
+                  <p className="text-slate-500">Total</p>
+                  <p className="font-semibold text-slate-950">Rs. {Number(wholesaleBillPreview.total_amount || 0).toLocaleString()}</p>
+                </div>
+              </div>
+              <div className="overflow-x-auto rounded-md border border-slate-200">
+                <table className="min-w-full divide-y divide-slate-200 text-sm">
+                  <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2">Item</th>
+                      <th className="px-3 py-2">Code</th>
+                      <th className="px-3 py-2">Branch</th>
+                      <th className="px-3 py-2 text-right">Qty</th>
+                      <th className="px-3 py-2 text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {(wholesaleBillPreview.items || []).map((item) => (
+                      <tr key={item.id}>
+                        <td className="px-3 py-2 font-semibold text-slate-950">{item.item_name}</td>
+                        <td className="px-3 py-2 text-slate-600">{item.item_code || '-'}</td>
+                        <td className="px-3 py-2 text-slate-600">{item.branch_name || '-'}</td>
+                        <td className="px-3 py-2 text-right text-slate-700">{item.quantity}</td>
+                        <td className="px-3 py-2 text-right font-semibold text-slate-950">Rs. {Number(item.line_total || 0).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button
+                type="button"
+                onClick={() => downloadWholesaleBill(wholesaleBillPreview.id)}
+                className="inline-flex items-center gap-2 rounded-md bg-purple-700 px-4 py-2 text-sm font-semibold text-white"
+              >
+                <Download size={16} /> Download PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

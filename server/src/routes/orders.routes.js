@@ -40,6 +40,17 @@ const orderSchema = z.object({
   is_future_order: z.boolean().optional(),
   future_needed_date: z.string().min(10).optional().nullable(),
   future_note: z.string().optional().nullable(),
+  is_wholesale: z.boolean().optional(),
+  wholesale_items: z.array(z.object({
+    stock_item_id: z.coerce.number().int().positive().optional().nullable(),
+    catalog_item_id: z.coerce.number().int().positive().optional().nullable(),
+    item_name: z.string().min(1),
+    item_code: z.string().optional().nullable(),
+    branch_name: z.string().optional().nullable(),
+    branch_code: z.string().optional().nullable(),
+    quantity: z.coerce.number().int().positive(),
+    unit_price: z.coerce.number().min(0)
+  })).optional(),
   quantity: z.number().int().positive().optional(),
   order_quantity: z.number().int().positive().optional(),
   total_amount: z.number().nonnegative().optional(),
@@ -78,6 +89,50 @@ const listSql = `
   )
 `;
 
+const orderListSql = `
+  SELECT
+    o.id,
+    o.order_number,
+    o.product_id,
+    o.facebook_page_id,
+    o.courier_service_id,
+    o.tracking_number,
+    o.status_id,
+    o.assigned_employee_id,
+    o.assigned_co_admin_id,
+    o.needed_date,
+    o.is_fast,
+    o.is_future_order,
+    o.future_needed_date,
+    o.is_wholesale,
+    o.order_quantity,
+    o.total_amount,
+    o.advance_amount,
+    o.created_at,
+    o.updated_at,
+    c.name AS customer_name,
+    c.phone AS customer_phone,
+    p.name AS product_name,
+    fp.name AS facebook_page_name,
+    cs.name AS courier_service_name,
+    s.name AS status_name,
+    s.color AS status_color,
+    e.name AS assigned_employee_name
+  FROM orders o
+  JOIN customers c ON c.id = o.customer_id
+  JOIN products p ON p.id = o.product_id
+  LEFT JOIN facebook_pages fp ON fp.id = o.facebook_page_id
+  LEFT JOIN courier_services cs ON cs.id = o.courier_service_id
+  JOIN order_statuses s ON s.id = o.status_id
+  LEFT JOIN employees e ON e.id = o.assigned_employee_id
+`;
+
+function parsePagination(queryParams) {
+  const page = Math.max(Number.parseInt(queryParams.page, 10) || 1, 1);
+  const limit = Math.min(Math.max(Number.parseInt(queryParams.limit, 10) || 50, 1), 100);
+  return { page, limit, offset: (page - 1) * limit };
+}
+
 let hasCheckedFacebookPageColumn = false;
 async function ensureFacebookPageWhatsAppColumn() {
   if (hasCheckedFacebookPageColumn) return;
@@ -95,16 +150,28 @@ async function ensureFacebookPageWhatsAppColumn() {
 }
 
 let hasCheckedOrderArchiveColumns = false;
+let orderArchiveSupportPromise = null;
 async function ensureOrderArchiveSupport({ connection = null } = {}) {
   if (hasCheckedOrderArchiveColumns) return;
+  if (!connection && orderArchiveSupportPromise) return orderArchiveSupportPromise;
+
+  const checkSupport = async () => {
   const runner = connection
     ? async (sql, params = []) => {
       const [rows] = await connection.execute(sql, params);
       return rows;
     }
     : query;
+  const runSchemaChange = async (sql) => {
+    try {
+      return await runner(sql);
+    } catch (error) {
+      if (['ER_DUP_FIELDNAME', 'ER_TABLE_EXISTS_ERROR', 'ER_DUP_KEYNAME'].includes(error?.code)) return null;
+      throw error;
+    }
+  };
 
-  await runner(`CREATE TABLE IF NOT EXISTS courier_services (
+  await runSchemaChange(`CREATE TABLE IF NOT EXISTS courier_services (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(120) NOT NULL UNIQUE,
     phone VARCHAR(30),
@@ -121,47 +188,91 @@ async function ensureOrderArchiveSupport({ connection = null } = {}) {
         'deleted_at', 'deleted_by', 'is_deleted', 'archived_from_active_list',
        'assigned_co_admin_id', 'courier_service_id', 'tracking_number',
         'recipient_contact_number', 'parcel_weight',
-        'is_future_order', 'future_needed_date', 'future_note'
+        'is_future_order', 'future_needed_date', 'future_note',
+        'is_wholesale', 'wholesale_bill_id'
        )`
   );
   const existing = new Set(columns.map((column) => column.COLUMN_NAME));
   if (!existing.has('deleted_at')) {
-    await runner('ALTER TABLE orders ADD COLUMN deleted_at TIMESTAMP NULL AFTER updated_at');
+    await runSchemaChange('ALTER TABLE orders ADD COLUMN deleted_at TIMESTAMP NULL AFTER updated_at');
   }
   if (!existing.has('deleted_by')) {
-    await runner('ALTER TABLE orders ADD COLUMN deleted_by INT NULL AFTER deleted_at');
+    await runSchemaChange('ALTER TABLE orders ADD COLUMN deleted_by INT NULL AFTER deleted_at');
   }
   if (!existing.has('is_deleted')) {
-    await runner('ALTER TABLE orders ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT FALSE AFTER deleted_by');
+    await runSchemaChange('ALTER TABLE orders ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT FALSE AFTER deleted_by');
   }
   if (!existing.has('archived_from_active_list')) {
-    await runner('ALTER TABLE orders ADD COLUMN archived_from_active_list BOOLEAN NOT NULL DEFAULT FALSE AFTER is_deleted');
+    await runSchemaChange('ALTER TABLE orders ADD COLUMN archived_from_active_list BOOLEAN NOT NULL DEFAULT FALSE AFTER is_deleted');
   }
   if (!existing.has('assigned_co_admin_id')) {
-    await runner('ALTER TABLE orders ADD COLUMN assigned_co_admin_id INT NULL AFTER assigned_employee_id');
+    await runSchemaChange('ALTER TABLE orders ADD COLUMN assigned_co_admin_id INT NULL AFTER assigned_employee_id');
   }
   if (!existing.has('courier_service_id')) {
-    await runner('ALTER TABLE orders ADD COLUMN courier_service_id INT NULL AFTER facebook_page_id');
+    await runSchemaChange('ALTER TABLE orders ADD COLUMN courier_service_id INT NULL AFTER facebook_page_id');
   }
   if (!existing.has('tracking_number')) {
-    await runner('ALTER TABLE orders ADD COLUMN tracking_number VARCHAR(120) NULL AFTER courier_service_id');
+    await runSchemaChange('ALTER TABLE orders ADD COLUMN tracking_number VARCHAR(120) NULL AFTER courier_service_id');
   }
   if (!existing.has('recipient_contact_number')) {
-    await runner('ALTER TABLE orders ADD COLUMN recipient_contact_number VARCHAR(30) NULL AFTER tracking_number');
+    await runSchemaChange('ALTER TABLE orders ADD COLUMN recipient_contact_number VARCHAR(30) NULL AFTER tracking_number');
   }
   if (!existing.has('parcel_weight')) {
-    await runner("ALTER TABLE orders ADD COLUMN parcel_weight VARCHAR(40) NULL DEFAULT '1kg' AFTER recipient_contact_number");
+    await runSchemaChange("ALTER TABLE orders ADD COLUMN parcel_weight VARCHAR(40) NULL DEFAULT '1kg' AFTER recipient_contact_number");
   }
   if (!existing.has('is_future_order')) {
-    await runner('ALTER TABLE orders ADD COLUMN is_future_order BOOLEAN NOT NULL DEFAULT FALSE AFTER is_fast');
+    await runSchemaChange('ALTER TABLE orders ADD COLUMN is_future_order BOOLEAN NOT NULL DEFAULT FALSE AFTER is_fast');
   }
   if (!existing.has('future_needed_date')) {
-    await runner('ALTER TABLE orders ADD COLUMN future_needed_date DATE NULL AFTER is_future_order');
+    await runSchemaChange('ALTER TABLE orders ADD COLUMN future_needed_date DATE NULL AFTER is_future_order');
   }
   if (!existing.has('future_note')) {
-    await runner('ALTER TABLE orders ADD COLUMN future_note TEXT NULL AFTER future_needed_date');
+    await runSchemaChange('ALTER TABLE orders ADD COLUMN future_note TEXT NULL AFTER future_needed_date');
+  }
+  if (!existing.has('is_wholesale')) {
+    await runSchemaChange('ALTER TABLE orders ADD COLUMN is_wholesale BOOLEAN NOT NULL DEFAULT FALSE AFTER is_future_order');
+  }
+  if (!existing.has('wholesale_bill_id')) {
+    await runSchemaChange('ALTER TABLE orders ADD COLUMN wholesale_bill_id INT NULL AFTER is_wholesale');
+  }
+  await runSchemaChange(`
+    CREATE TABLE IF NOT EXISTS wholesale_order_items (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      order_id INT NOT NULL,
+      stock_item_id INT NULL,
+      catalog_item_id INT NULL,
+      item_name VARCHAR(160) NOT NULL,
+      item_code VARCHAR(40) NULL,
+      branch_name VARCHAR(120) NULL,
+      branch_code VARCHAR(30) NULL,
+      quantity INT NOT NULL,
+      unit_price DECIMAL(12,2) NOT NULL DEFAULT 0,
+      line_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_wholesale_order_items_order (order_id),
+      CONSTRAINT fk_wholesale_order_items_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    )
+  `);
+  const wholesaleItemColumns = await runner(
+    `SELECT COLUMN_NAME
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'wholesale_order_items'
+       AND COLUMN_NAME IN ('catalog_item_id')`
+  );
+  const existingWholesaleItemColumns = new Set(wholesaleItemColumns.map((column) => column.COLUMN_NAME));
+  if (!existingWholesaleItemColumns.has('catalog_item_id')) {
+    await runSchemaChange('ALTER TABLE wholesale_order_items ADD COLUMN catalog_item_id INT NULL AFTER stock_item_id');
   }
   hasCheckedOrderArchiveColumns = true;
+  };
+
+  if (connection) return checkSupport();
+  orderArchiveSupportPromise = checkSupport().finally(() => {
+    orderArchiveSupportPromise = null;
+  });
+  return orderArchiveSupportPromise;
 }
 
 function addOrderVisibilityFilter(filters, params, user, options = {}) {
@@ -229,6 +340,103 @@ async function findOrCreateCustomer(body, connection) {
   }
 }
 
+function normalizeWholesaleItems(body) {
+  if (!body.is_wholesale) return null;
+  const rawItems = Array.isArray(body.wholesale_items) ? body.wholesale_items : [];
+  const items = rawItems.map((item) => {
+    const quantity = Number(item.quantity || 0);
+    const unitPrice = Number(item.unit_price || 0);
+    const itemName = String(item.item_name || '').trim();
+    if (!itemName || !Number.isInteger(quantity) || quantity <= 0 || Number.isNaN(unitPrice) || unitPrice < 0) {
+      const error = new Error('Wholesale orders require valid item name, quantity, and unit price.');
+      error.status = 400;
+      throw error;
+    }
+    return {
+      stock_item_id: item.stock_item_id || null,
+      catalog_item_id: item.catalog_item_id || null,
+      item_name: itemName,
+      item_code: item.item_code ? String(item.item_code).trim() : null,
+      branch_name: item.branch_name ? String(item.branch_name).trim() : null,
+      branch_code: item.branch_code ? String(item.branch_code).trim() : null,
+      quantity,
+      unit_price: unitPrice,
+      line_total: quantity * unitPrice
+    };
+  });
+  if (!items.length) {
+    const error = new Error('Add at least one wholesale item before saving this order.');
+    error.status = 400;
+    throw error;
+  }
+  return {
+    items,
+    totalQuantity: items.reduce((sum, item) => sum + item.quantity, 0),
+    totalAmount: items.reduce((sum, item) => sum + item.line_total, 0),
+    productName: items.map((item) => item.item_name).join(', ').slice(0, 180)
+  };
+}
+
+async function saveWholesaleItems({ connection, orderId, items }) {
+  await connection.execute('DELETE FROM wholesale_order_items WHERE order_id = ?', [orderId]);
+  for (const item of items) {
+    await connection.execute(
+      `INSERT INTO wholesale_order_items (
+        order_id, stock_item_id, catalog_item_id, item_name, item_code, branch_name, branch_code,
+        quantity, unit_price, line_total
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        orderId,
+        item.stock_item_id || null,
+        item.catalog_item_id || null,
+        item.item_name,
+        item.item_code || null,
+        item.branch_name || null,
+        item.branch_code || null,
+        item.quantity,
+        item.unit_price,
+        item.line_total
+      ]
+    );
+  }
+}
+
+async function getLinkedWholesaleBill(orderId) {
+  const columns = await query(
+    `SELECT COLUMN_NAME
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'stock_wholesale_bills'
+       AND COLUMN_NAME = 'order_id'`
+  );
+  if (!columns.length) return null;
+  const rows = await query(
+    `SELECT wb.*, e.name AS generated_by_name, r.name AS generated_by_role,
+            COUNT(wbi.id) AS item_count
+     FROM stock_wholesale_bills wb
+     JOIN employees e ON e.id = wb.generated_by
+     JOIN roles r ON r.id = e.role_id
+     LEFT JOIN stock_wholesale_bill_items wbi ON wbi.bill_id = wb.id
+     WHERE wb.order_id = :orderId
+     GROUP BY wb.id
+     ORDER BY wb.generated_at DESC, wb.id DESC
+     LIMIT 1`,
+    { orderId }
+  );
+  return rows[0] || null;
+}
+
+function applyWholesaleTotals(body, wholesaleOrder) {
+  if (!wholesaleOrder) return;
+  body.is_wholesale = true;
+  body.order_quantity = wholesaleOrder.totalQuantity;
+  body.quantity = wholesaleOrder.totalQuantity;
+  body.total_amount = wholesaleOrder.totalAmount;
+  if (!body.product_id && !body.product_name && !body.custom_product_name) {
+    body.product_name = wholesaleOrder.productName;
+  }
+}
+
 async function updateOrderCustomer({ orderId, body, connection }) {
   const [orders] = await connection.execute('SELECT customer_id FROM orders WHERE id = ?', [orderId]);
   if (!orders.length) return false;
@@ -283,9 +491,9 @@ async function insertOrderWithUniqueNumber({ connection, body, customerId, produ
       const [orderResult] = await connection.execute(
         `INSERT INTO orders (
           order_number, customer_id, product_id, facebook_page_id, courier_service_id, tracking_number, recipient_contact_number, parcel_weight, status_id, assigned_employee_id, assigned_co_admin_id,
-          needed_date, is_fast, is_future_order, future_needed_date, future_note,
+          needed_date, is_fast, is_future_order, is_wholesale, future_needed_date, future_note,
           quantity, order_quantity, total_amount, advance_amount, design_notes, return_reason, created_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           orderNumber,
           customerId,
@@ -301,6 +509,7 @@ async function insertOrderWithUniqueNumber({ connection, body, customerId, produ
           body.needed_date,
           body.is_fast || false,
           body.is_future_order || false,
+          body.is_wholesale || false,
           body.is_future_order ? (body.future_needed_date || body.needed_date) : null,
           body.future_note || null,
           body.order_quantity || body.quantity || 1,
@@ -421,7 +630,6 @@ async function getBillPreview(orderId, billId = null) {
 
 router.get('/', authenticate, requireRole('admin'), async (req, res, next) => {
   try {
-    await ensureStatusWorkflowSupport();
     await ensureFacebookPageWhatsAppColumn();
     await ensureOrderArchiveSupport();
     const filters = [
@@ -459,11 +667,35 @@ router.get('/', authenticate, requireRole('admin'), async (req, res, next) => {
     if (req.query.fast === 'true') {
       filters.push('o.is_fast = TRUE');
     }
+    if (req.query.order_type === 'wholesale') {
+      filters.push('o.is_wholesale = TRUE');
+    }
+    if (req.query.order_type === 'other') {
+      filters.push('COALESCE(o.is_wholesale, FALSE) = FALSE');
+    }
     addOrderVisibilityFilter(filters, params, req.user, { assignedOnly: req.query.assigned_only === 'true' });
 
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-    const orders = await query(`${listSql} ${where} ORDER BY o.is_fast DESC, o.needed_date ASC, o.created_at DESC`, params);
-    res.json(orders);
+    const { page, limit, offset } = parsePagination(req.query);
+    const countRows = await query(
+      `SELECT COUNT(*) AS total
+       FROM orders o
+       JOIN customers c ON c.id = o.customer_id
+       JOIN products p ON p.id = o.product_id
+       LEFT JOIN courier_services cs ON cs.id = o.courier_service_id
+       JOIN order_statuses s ON s.id = o.status_id
+       ${where}`,
+      params
+    );
+    const total = Number(countRows[0]?.total || 0);
+    const totalPages = Math.max(Math.ceil(total / limit), 1);
+    const orders = await query(
+      `${orderListSql} ${where}
+       ORDER BY o.is_fast DESC, o.needed_date ASC, o.created_at DESC
+       LIMIT ${limit} OFFSET ${offset}`,
+      params
+    );
+    res.json({ orders, pagination: { page, limit, total, totalPages } });
   } catch (error) {
     next(error);
   }
@@ -471,7 +703,6 @@ router.get('/', authenticate, requireRole('admin'), async (req, res, next) => {
 
 router.get('/:id', authenticate, async (req, res, next) => {
   try {
-    await ensureStatusWorkflowSupport();
     await ensureFacebookPageWhatsAppColumn();
     await ensureOrderArchiveSupport();
     const detailFilters = ['o.id = :id'];
@@ -494,7 +725,7 @@ router.get('/:id', authenticate, async (req, res, next) => {
       { id: req.params.id }
     );
     await ensureBillTable();
-    const [history, commissions, assignmentHistory, bills] = await Promise.all([
+    const [history, commissions, assignmentHistory, bills, wholesaleItems, linkedWholesaleBill] = await Promise.all([
       query(
         `SELECT h.*, fs.name AS from_status_name, ts.name AS to_status_name, e.name AS changed_by_name, r.name AS changed_by_role
          FROM order_status_history h
@@ -534,9 +765,17 @@ router.get('/:id', authenticate, async (req, res, next) => {
          WHERE b.order_id = :id
          ORDER BY b.generated_at DESC`,
         { id: req.params.id }
-      )
+      ),
+      query(
+        `SELECT *
+         FROM wholesale_order_items
+         WHERE order_id = :id
+         ORDER BY id ASC`,
+        { id: req.params.id }
+      ),
+      getLinkedWholesaleBill(req.params.id)
     ]);
-    res.json({ ...rows[0], tasks, history, commissions, assignmentHistory, bills });
+    res.json({ ...rows[0], tasks, history, commissions, assignmentHistory, bills, wholesaleItems, linkedWholesaleBill });
   } catch (error) {
     next(error);
   }
@@ -549,6 +788,8 @@ router.post('/', authenticate, requireRole('admin'), async (req, res, next) => {
     await ensureOrderNumberSequenceSupport();
     await connection.beginTransaction();
     await ensureOrderArchiveSupport({ connection });
+    const wholesaleOrder = normalizeWholesaleItems(body);
+    applyWholesaleTotals(body, wholesaleOrder);
 
     const customerId = await findOrCreateCustomer(body, connection);
     const productId = await resolveProductId(body, connection);
@@ -559,6 +800,9 @@ router.post('/', authenticate, requireRole('admin'), async (req, res, next) => {
       productId,
       userId: req.user.id
     });
+    if (wholesaleOrder) {
+      await saveWholesaleItems({ connection, orderId, items: wholesaleOrder.items });
+    }
 
     await connection.execute('INSERT INTO order_activity (order_id, employee_id, action, details) VALUES (?, ?, ?, ?)', [
       orderId,
@@ -826,6 +1070,9 @@ router.put('/:id', authenticate, requireRole('admin'), async (req, res, next) =>
     const body = orderSchema.partial().parse(req.body);
     await connection.beginTransaction();
     await ensureOrderArchiveSupport({ connection });
+    const hasWholesaleField = Object.prototype.hasOwnProperty.call(body, 'is_wholesale');
+    const wholesaleOrder = normalizeWholesaleItems(body);
+    applyWholesaleTotals(body, wholesaleOrder);
 
     if (body.customer_name || body.customer_phone || body.customer_address !== undefined || body.customer_notes !== undefined) {
       const updatedCustomer = await updateOrderCustomer({ orderId: req.params.id, body, connection });
@@ -856,7 +1103,7 @@ router.put('/:id', authenticate, requireRole('admin'), async (req, res, next) =>
       'product_id', 'facebook_page_id', 'courier_service_id', 'tracking_number',
       'recipient_contact_number', 'parcel_weight', 'status_id',
       'assigned_employee_id', 'assigned_co_admin_id', 'needed_date', 'is_fast', 'is_future_order',
-      'future_needed_date', 'future_note', 'quantity', 'order_quantity', 'total_amount',
+      'future_needed_date', 'future_note', 'is_wholesale', 'quantity', 'order_quantity', 'total_amount',
       'advance_amount', 'design_notes', 'return_reason'
     ];
     const updates = Object.fromEntries(Object.entries(body).filter(([key]) => allowed.includes(key)));
@@ -868,6 +1115,11 @@ router.put('/:id', authenticate, requireRole('admin'), async (req, res, next) =>
         `UPDATE orders SET ${keys.map((key) => `${key} = ?`).join(', ')} WHERE id = ?`,
         [...keys.map((key) => updates[key]), req.params.id]
       );
+    }
+    if (wholesaleOrder) {
+      await saveWholesaleItems({ connection, orderId: req.params.id, items: wholesaleOrder.items });
+    } else if (hasWholesaleField && body.is_wholesale === false) {
+      await connection.execute('DELETE FROM wholesale_order_items WHERE order_id = ?', [req.params.id]);
     }
 
     const hasAssignedEmployee = Object.prototype.hasOwnProperty.call(body, 'assigned_employee_id');

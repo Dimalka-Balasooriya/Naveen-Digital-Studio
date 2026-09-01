@@ -14,24 +14,87 @@ function isWorkerRole(role) {
 }
 
 let hasCheckedOrderArchiveColumns = false;
+let orderArchiveSupportPromise = null;
 async function ensureOrderArchiveSupport() {
   if (hasCheckedOrderArchiveColumns) return;
+  if (orderArchiveSupportPromise) return orderArchiveSupportPromise;
+
+  orderArchiveSupportPromise = (async () => {
+  const runSchemaChange = async (sql) => {
+    try {
+      return await query(sql);
+    } catch (error) {
+      if (['ER_DUP_FIELDNAME', 'ER_TABLE_EXISTS_ERROR', 'ER_DUP_KEYNAME'].includes(error?.code)) return null;
+      throw error;
+    }
+  };
   const columns = await query(
     `SELECT COLUMN_NAME
      FROM INFORMATION_SCHEMA.COLUMNS
      WHERE TABLE_SCHEMA = DATABASE()
        AND TABLE_NAME = 'orders'
-       AND COLUMN_NAME IN ('deleted_at', 'deleted_by', 'is_deleted', 'archived_from_active_list', 'is_future_order', 'future_needed_date', 'future_note')`
+       AND COLUMN_NAME IN ('deleted_at', 'deleted_by', 'is_deleted', 'archived_from_active_list', 'is_future_order', 'future_needed_date', 'future_note', 'is_wholesale', 'wholesale_bill_id')`
   );
   const existing = new Set(columns.map((column) => column.COLUMN_NAME));
-  if (!existing.has('deleted_at')) await query('ALTER TABLE orders ADD COLUMN deleted_at TIMESTAMP NULL AFTER updated_at');
-  if (!existing.has('deleted_by')) await query('ALTER TABLE orders ADD COLUMN deleted_by INT NULL AFTER deleted_at');
-  if (!existing.has('is_deleted')) await query('ALTER TABLE orders ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT FALSE AFTER deleted_by');
-  if (!existing.has('archived_from_active_list')) await query('ALTER TABLE orders ADD COLUMN archived_from_active_list BOOLEAN NOT NULL DEFAULT FALSE AFTER is_deleted');
-  if (!existing.has('is_future_order')) await query('ALTER TABLE orders ADD COLUMN is_future_order BOOLEAN NOT NULL DEFAULT FALSE AFTER is_fast');
-  if (!existing.has('future_needed_date')) await query('ALTER TABLE orders ADD COLUMN future_needed_date DATE NULL AFTER is_future_order');
-  if (!existing.has('future_note')) await query('ALTER TABLE orders ADD COLUMN future_note TEXT NULL AFTER future_needed_date');
+  if (!existing.has('deleted_at')) await runSchemaChange('ALTER TABLE orders ADD COLUMN deleted_at TIMESTAMP NULL AFTER updated_at');
+  if (!existing.has('deleted_by')) await runSchemaChange('ALTER TABLE orders ADD COLUMN deleted_by INT NULL AFTER deleted_at');
+  if (!existing.has('is_deleted')) await runSchemaChange('ALTER TABLE orders ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT FALSE AFTER deleted_by');
+  if (!existing.has('archived_from_active_list')) await runSchemaChange('ALTER TABLE orders ADD COLUMN archived_from_active_list BOOLEAN NOT NULL DEFAULT FALSE AFTER is_deleted');
+  if (!existing.has('is_future_order')) await runSchemaChange('ALTER TABLE orders ADD COLUMN is_future_order BOOLEAN NOT NULL DEFAULT FALSE AFTER is_fast');
+  if (!existing.has('is_wholesale')) await runSchemaChange('ALTER TABLE orders ADD COLUMN is_wholesale BOOLEAN NOT NULL DEFAULT FALSE AFTER is_future_order');
+  if (!existing.has('wholesale_bill_id')) await runSchemaChange('ALTER TABLE orders ADD COLUMN wholesale_bill_id INT NULL AFTER is_wholesale');
+  if (!existing.has('future_needed_date')) await runSchemaChange('ALTER TABLE orders ADD COLUMN future_needed_date DATE NULL AFTER is_future_order');
+  if (!existing.has('future_note')) await runSchemaChange('ALTER TABLE orders ADD COLUMN future_note TEXT NULL AFTER future_needed_date');
+  await runSchemaChange(`
+    CREATE TABLE IF NOT EXISTS wholesale_order_items (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      order_id INT NOT NULL,
+      stock_item_id INT NULL,
+      catalog_item_id INT NULL,
+      item_name VARCHAR(160) NOT NULL,
+      item_code VARCHAR(40) NULL,
+      branch_name VARCHAR(120) NULL,
+      branch_code VARCHAR(30) NULL,
+      quantity INT NOT NULL DEFAULT 1,
+      unit_price DECIMAL(12,2) NOT NULL DEFAULT 0,
+      line_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_wholesale_order_items_order (order_id),
+      CONSTRAINT fk_production_wholesale_order_items_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    )
+  `);
+  const wholesaleItemColumns = await query(
+    `SELECT COLUMN_NAME
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'wholesale_order_items'
+       AND COLUMN_NAME IN ('catalog_item_id')`
+  );
+  const existingWholesaleItemColumns = new Set(wholesaleItemColumns.map((column) => column.COLUMN_NAME));
+  if (!existingWholesaleItemColumns.has('catalog_item_id')) {
+    await runSchemaChange('ALTER TABLE wholesale_order_items ADD COLUMN catalog_item_id INT NULL AFTER stock_item_id');
+  }
   hasCheckedOrderArchiveColumns = true;
+  })().finally(() => {
+    orderArchiveSupportPromise = null;
+  });
+  return orderArchiveSupportPromise;
+}
+
+let hasCheckedWholesaleBillOrderColumn = false;
+let hasWholesaleBillOrderColumn = false;
+async function supportsWholesaleBillOrderLink() {
+  if (hasCheckedWholesaleBillOrderColumn) return hasWholesaleBillOrderColumn;
+  const columns = await query(
+    `SELECT COLUMN_NAME
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'stock_wholesale_bills'
+       AND COLUMN_NAME = 'order_id'`
+  );
+  hasWholesaleBillOrderColumn = columns.length > 0;
+  hasCheckedWholesaleBillOrderColumn = true;
+  return hasWholesaleBillOrderColumn;
 }
 
 router.get('/statuses', async (req, res, next) => {
@@ -64,24 +127,130 @@ router.get('/orders', async (req, res, next) => {
       )`);
     }
     if (isWorkerRole(req.user.role)) params.employeeId = req.user.id;
+    if (req.query.status_id) {
+      filters.push('o.status_id = :statusId');
+      params.statusId = req.query.status_id;
+    }
+    if (req.query.status) {
+      filters.push('LOWER(s.name) = LOWER(:statusName)');
+      params.statusName = req.query.status;
+    }
     const where = `WHERE ${filters.join(' AND ')}`;
+    const assignmentJoin = isWorkerRole(req.user.role)
+      ? `LEFT JOIN order_assignments oa ON oa.id = (
+          SELECT picked_assignment.id
+          FROM order_assignments picked_assignment
+          WHERE picked_assignment.order_id = o.id
+            AND COALESCE(picked_assignment.is_current, TRUE) = TRUE
+            AND picked_assignment.assigned_to_employee_id = :employeeId
+          ORDER BY picked_assignment.task_id IS NULL DESC, picked_assignment.assignment_started_at DESC, picked_assignment.id DESC
+          LIMIT 1
+        )`
+      : `LEFT JOIN order_assignments oa ON oa.id = (
+          SELECT picked_assignment.id
+          FROM order_assignments picked_assignment
+          WHERE picked_assignment.order_id = o.id
+            AND COALESCE(picked_assignment.is_current, TRUE) = TRUE
+            AND picked_assignment.task_id IS NULL
+          ORDER BY picked_assignment.assignment_started_at DESC, picked_assignment.id DESC
+          LIMIT 1
+        )`;
 
     const orders = await query(
-      `SELECT o.id, o.order_number, o.order_quantity, o.needed_date, o.is_fast, o.is_future_order, o.future_needed_date, o.future_note, o.production_progress, o.design_notes, o.status_id,
+      `SELECT o.id, o.order_number, o.order_quantity, o.needed_date, o.is_fast, o.is_future_order, o.future_needed_date, o.future_note,
+        o.is_wholesale, o.wholesale_bill_id, o.assigned_employee_id, o.total_amount, o.advance_amount, o.production_progress, o.design_notes, o.status_id,
         c.name AS customer_name, c.phone AS customer_phone, p.name AS product_name,
         s.name AS status_name, s.color AS status_color,
-        admin.name AS assigned_by_admin_name, oa.assigned_by_role, oa.assignment_started_at AS assigned_at,
+        admin.name AS assigned_by_admin_name, oa.assigned_to_employee_id AS current_assignment_employee_id, oa.assigned_by_role, oa.assignment_started_at AS assigned_at,
         oa.commission_amount AS assigned_commission
        FROM orders o
        JOIN customers c ON c.id = o.customer_id
        JOIN products p ON p.id = o.product_id
        JOIN order_statuses s ON s.id = o.status_id
-       LEFT JOIN order_assignments oa ON oa.order_id = o.id AND oa.is_current = TRUE
+       ${assignmentJoin}
        LEFT JOIN employees admin ON admin.id = oa.assigned_by_admin_id
        ${where}
        ORDER BY o.is_fast DESC, o.needed_date ASC`,
       params
     );
+    const orderIds = orders.map((order) => Number(order.id)).filter(Boolean);
+    const itemsByOrder = new Map();
+    if (orderIds.length) {
+      const idParams = Object.fromEntries(orderIds.map((id, index) => [`itemOrder${index}`, id]));
+      const placeholders = orderIds.map((_, index) => `:itemOrder${index}`).join(', ');
+      const items = await query(
+        `SELECT *
+         FROM wholesale_order_items
+         WHERE order_id IN (${placeholders})
+         ORDER BY order_id ASC, id ASC`,
+        idParams
+      );
+      items.forEach((item) => {
+        const orderId = Number(item.order_id);
+        const list = itemsByOrder.get(orderId) || [];
+        list.push(item);
+        itemsByOrder.set(orderId, list);
+      });
+    }
+
+    const wholesaleBillIds = [...new Set(orders
+      .map((order) => Number(order.wholesale_bill_id))
+      .filter(Boolean))];
+    const billClauses = [];
+    const billParams = {};
+    if (orderIds.length) {
+      billClauses.push(`order_id IN (${orderIds.map((_, index) => `:billOrder${index}`).join(', ')})`);
+      orderIds.forEach((id, index) => {
+        billParams[`billOrder${index}`] = id;
+      });
+    }
+    if (wholesaleBillIds.length) {
+      billClauses.push(`id IN (${wholesaleBillIds.map((_, index) => `:bill${index}`).join(', ')})`);
+      wholesaleBillIds.forEach((id, index) => {
+        billParams[`bill${index}`] = id;
+      });
+    }
+
+    const billsById = new Map();
+    const billsByOrder = new Map();
+    const canLinkWholesaleBills = await supportsWholesaleBillOrderLink();
+    if (canLinkWholesaleBills && billClauses.length) {
+      const bills = await query(
+        `SELECT id, order_id, bill_number, total_amount, generated_at
+         FROM stock_wholesale_bills
+         WHERE ${billClauses.join(' OR ')}
+         ORDER BY order_id ASC, generated_at DESC, id DESC`,
+        billParams
+      );
+      bills.forEach((bill) => {
+        billsById.set(Number(bill.id), bill);
+        const orderId = Number(bill.order_id);
+        if (orderId && !billsByOrder.has(orderId)) billsByOrder.set(orderId, bill);
+      });
+    }
+
+    orders.forEach((order) => {
+      const orderId = Number(order.id);
+      const wholesaleItems = itemsByOrder.get(orderId) || [];
+      const linkedBill = order.wholesale_bill_id ? billsById.get(Number(order.wholesale_bill_id)) : null;
+      const bill = linkedBill || billsByOrder.get(orderId) || null;
+      order.wholesale_items = wholesaleItems;
+      order.is_wholesale = Boolean(order.is_wholesale || wholesaleItems.length || bill);
+      if (bill) order.wholesale_bill_id = bill.id;
+
+      const workerCanViewBill = !isWorkerRole(req.user.role)
+        || Number(order.assigned_employee_id) === Number(req.user.id)
+        || Number(order.current_assignment_employee_id) === Number(req.user.id);
+      if (bill && workerCanViewBill) {
+        order.linked_wholesale_bill = {
+          id: bill.id,
+          bill_number: bill.bill_number,
+          generated_at: bill.generated_at,
+          total_amount: bill.total_amount,
+          pdf_available: true
+        };
+      }
+    });
 
     res.json(orders);
   } catch (error) {

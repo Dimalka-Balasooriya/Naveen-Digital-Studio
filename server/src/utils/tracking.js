@@ -1,6 +1,8 @@
 import { query } from '../config/db.js';
 
 let hasCheckedWorkflowColumns = false;
+let hasSeededDefaultOrderStatuses = false;
+let seedDefaultOrderStatusesPromise = null;
 
 async function run(connection, sql, params = []) {
   if (connection) {
@@ -216,53 +218,83 @@ export async function isProductionAllowedStatus({ statusId, connection = null, r
 }
 
 export async function seedDefaultOrderStatuses({ connection = null } = {}) {
-  for (const [index, status] of defaultOrderStatuses.entries()) {
-    await run(
-      connection,
-      `INSERT INTO order_statuses (name, color, sort_order, is_final, is_active)
-       SELECT ?, ?, ?, ?, TRUE
-       WHERE NOT EXISTS (
-         SELECT 1 FROM order_statuses existing_status WHERE LOWER(existing_status.name) = LOWER(?)
-       )`,
-      [status.name, status.color, index + 1, isCompleteStatusName(status.name) || ['returned'].includes(status.name.toLowerCase()), status.name]
-    );
+  if (hasSeededDefaultOrderStatuses) return;
+  if (seedDefaultOrderStatusesPromise) return seedDefaultOrderStatusesPromise;
 
-    await run(
-      connection,
-      `UPDATE order_statuses
-       SET name = ?,
-           color = ?,
-           sort_order = ?,
-           is_final = ?,
-           is_active = TRUE
-       WHERE LOWER(name) = LOWER(?)`,
-      [status.name, status.color, index + 1, isCompleteStatusName(status.name) || status.name.toLowerCase() === 'returned', status.name]
-    );
-  }
-
-  const rows = await run(
-    connection,
-    `SELECT id, name, color
-     FROM order_statuses
-     WHERE is_active = TRUE
-     ORDER BY sort_order, id`
-  );
-
-  for (const [index, status] of rows.entries()) {
-    const formattedName = titleCaseWords(status.name);
-    const normalizedColor = String(status.color || '').trim().toLowerCase();
-    const supportedColor = fallbackStatusColors.map((color) => color.toLowerCase()).includes(normalizedColor);
-    const nextColor = supportedColor && normalizedColor !== 'slate'
-      ? normalizedColor
-      : fallbackStatusColors[index % fallbackStatusColors.length];
-
-    if (formattedName !== status.name || nextColor !== normalizedColor) {
+  seedDefaultOrderStatusesPromise = (async () => {
+    for (const [index, status] of defaultOrderStatuses.entries()) {
       await run(
         connection,
-        'UPDATE order_statuses SET name = ?, color = ? WHERE id = ?',
-        [formattedName, nextColor, status.id]
+        `INSERT INTO order_statuses (name, color, sort_order, is_final, is_active)
+         SELECT ?, ?, ?, ?, TRUE
+         WHERE NOT EXISTS (
+           SELECT 1 FROM order_statuses existing_status WHERE LOWER(existing_status.name) = LOWER(?)
+         )`,
+        [status.name, status.color, index + 1, isCompleteStatusName(status.name) || ['returned'].includes(status.name.toLowerCase()), status.name]
+      );
+
+      await run(
+        connection,
+        `UPDATE order_statuses
+         SET name = ?,
+             color = ?,
+             sort_order = ?,
+             is_final = ?,
+             is_active = TRUE
+         WHERE LOWER(name) = LOWER(?)
+           AND (
+             name <> ?
+             OR color <> ?
+             OR sort_order <> ?
+             OR is_final <> ?
+             OR is_active <> TRUE
+           )`,
+        [
+          status.name,
+          status.color,
+          index + 1,
+          isCompleteStatusName(status.name) || status.name.toLowerCase() === 'returned',
+          status.name,
+          status.name,
+          status.color,
+          index + 1,
+          isCompleteStatusName(status.name) || status.name.toLowerCase() === 'returned'
+        ]
       );
     }
+
+    const rows = await run(
+      connection,
+      `SELECT id, name, color
+       FROM order_statuses
+       WHERE is_active = TRUE
+       ORDER BY sort_order, id`
+    );
+
+    for (const [index, status] of rows.entries()) {
+      const formattedName = titleCaseWords(status.name);
+      const normalizedColor = String(status.color || '').trim().toLowerCase();
+      const supportedColor = fallbackStatusColors.map((color) => color.toLowerCase()).includes(normalizedColor);
+      const nextColor = supportedColor && normalizedColor !== 'slate'
+        ? normalizedColor
+        : fallbackStatusColors[index % fallbackStatusColors.length];
+
+      if (formattedName !== status.name || nextColor !== normalizedColor) {
+        await run(
+          connection,
+          'UPDATE order_statuses SET name = ?, color = ? WHERE id = ?',
+          [formattedName, nextColor, status.id]
+        );
+      }
+    }
+
+    hasSeededDefaultOrderStatuses = true;
+  })();
+
+  try {
+    await seedDefaultOrderStatusesPromise;
+  } finally {
+    seedDefaultOrderStatusesPromise = null;
   }
 }
 

@@ -3,7 +3,7 @@ import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import { z } from 'zod';
 import { authenticate, requireAdminOrCoAdmin, requireOwner } from '../middleware/auth.js';
-import { query } from '../config/db.js';
+import { pool, query } from '../config/db.js';
 
 const router = Router();
 
@@ -134,6 +134,25 @@ async function ensureStockTables() {
     )
   `);
 
+  const wholesaleOrderColumn = await query(
+    `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'stock_wholesale_bills'
+       AND COLUMN_NAME = 'order_id'`
+  );
+  if (!wholesaleOrderColumn.length) {
+    await query('ALTER TABLE stock_wholesale_bills ADD COLUMN order_id INT NULL AFTER id');
+  }
+  const wholesaleOrderIndex = await query(
+    `SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'stock_wholesale_bills'
+       AND INDEX_NAME = 'idx_stock_wholesale_bills_order'`
+  );
+  if (!wholesaleOrderIndex.length) {
+    await query('CREATE INDEX idx_stock_wholesale_bills_order ON stock_wholesale_bills(order_id)');
+  }
+
   const columns = await query(
     `SELECT COLUMN_NAME
      FROM INFORMATION_SCHEMA.COLUMNS
@@ -211,6 +230,8 @@ const stockBillSchema = z.object({
 });
 
 const wholesaleBillSchema = z.object({
+  order_id: z.coerce.number().int().positive().optional().nullable(),
+  allow_revision: z.boolean().optional(),
   customer_name: z.string().optional().nullable(),
   note: z.string().optional().nullable(),
   items: z.array(z.object({
@@ -275,10 +296,14 @@ async function getStockBill(id) {
 async function getWholesaleBill(id) {
   await ensureStockTables();
   const rows = await query(
-    `SELECT wb.*, e.name AS generated_by_name, r.name AS generated_by_role
+    `SELECT wb.*, e.name AS generated_by_name, r.name AS generated_by_role,
+            o.order_number, c.name AS order_customer_name, c.phone AS order_customer_phone,
+            c.address AS order_customer_address
      FROM stock_wholesale_bills wb
      JOIN employees e ON e.id = wb.generated_by
      JOIN roles r ON r.id = e.role_id
+     LEFT JOIN orders o ON o.id = wb.order_id
+     LEFT JOIN customers c ON c.id = o.customer_id
      WHERE wb.id = :id
      LIMIT 1`,
     { id }
@@ -292,6 +317,55 @@ async function getWholesaleBill(id) {
     { id }
   );
   return { ...rows[0], items };
+}
+
+async function canAccessWholesaleBill(user, bill) {
+  const role = String(user.role || '').toUpperCase();
+  if (['OWNER', 'CO_ADMIN'].includes(role)) return true;
+  if (!['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'].includes(role) || !bill.order_id) return false;
+
+  const assignedRows = await query(
+    `SELECT o.id
+     FROM orders o
+     LEFT JOIN order_assignments oa
+       ON oa.order_id = o.id
+      AND oa.assigned_to_employee_id = :user_id
+      AND COALESCE(oa.is_current, TRUE) = TRUE
+     WHERE o.id = :order_id
+       AND (
+         o.assigned_employee_id = :user_id
+         OR oa.id IS NOT NULL
+       )
+     LIMIT 1`,
+    { order_id: bill.order_id, user_id: user.id }
+  );
+  return assignedRows.length > 0;
+}
+
+function safeWholesaleBillPayload(bill) {
+  return {
+    id: bill.id,
+    order_id: bill.order_id,
+    order_number: bill.order_number,
+    bill_number: bill.bill_number,
+    customer_name: bill.customer_name || bill.order_customer_name || null,
+    customer_phone: bill.order_customer_phone || null,
+    total_amount: bill.total_amount,
+    generated_at: bill.generated_at,
+    generated_by_name: bill.generated_by_name,
+    generated_by_role: bill.generated_by_role,
+    pdf_available: true,
+    items: (bill.items || []).map((item) => ({
+      id: item.id,
+      item_name: item.item_name,
+      item_code: item.item_code,
+      branch_name: item.branch_name,
+      branch_code: item.branch_code,
+      quantity: item.quantity,
+      unit_price: item.unit_price,
+      line_total: item.line_total
+    }))
+  };
 }
 
 async function sendStockExcel(res, rows, filename) {
@@ -675,6 +749,8 @@ router.get('/wholesale-bills', requireAdminOrCoAdmin, async (req, res, next) => 
     await ensureStockTables();
     const rows = await query(
       `SELECT wb.id,
+              wb.order_id,
+              o.order_number,
               wb.bill_number,
               wb.customer_name,
               wb.note,
@@ -686,6 +762,7 @@ router.get('/wholesale-bills', requireAdminOrCoAdmin, async (req, res, next) => 
        FROM stock_wholesale_bills wb
        JOIN employees e ON e.id = wb.generated_by
        JOIN roles r ON r.id = e.role_id
+       LEFT JOIN orders o ON o.id = wb.order_id
        LEFT JOIN stock_wholesale_bill_items wbi ON wbi.bill_id = wb.id
        GROUP BY wb.id
        ORDER BY wb.generated_at DESC, wb.id DESC
@@ -698,6 +775,7 @@ router.get('/wholesale-bills', requireAdminOrCoAdmin, async (req, res, next) => 
 });
 
 router.post('/wholesale-bills', requireAdminOrCoAdmin, async (req, res, next) => {
+  const connection = await pool.getConnection();
   try {
     await ensureStockTables();
     const body = wholesaleBillSchema.parse({
@@ -709,53 +787,101 @@ router.post('/wholesale-bills', requireAdminOrCoAdmin, async (req, res, next) =>
         unit_price: Number(item.unit_price)
       }))
     });
+    await connection.beginTransaction();
+    if (body.order_id && !body.allow_revision) {
+      const [existing] = await connection.execute(
+        `SELECT id, bill_number
+         FROM stock_wholesale_bills
+         WHERE order_id = ?
+         ORDER BY generated_at DESC, id DESC
+         LIMIT 1`,
+        [body.order_id]
+      );
+      if (existing.length) {
+        await connection.rollback();
+        return res.status(409).json({
+          message: 'Wholesale bill already exists for this order. Use Create Revised Bill.',
+          bill_id: existing[0].id,
+          bill_number: existing[0].bill_number
+        });
+      }
+    }
     const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const countRows = await query('SELECT COUNT(*) AS count FROM stock_wholesale_bills WHERE DATE(generated_at) = CURRENT_DATE');
+    const [countRows] = await connection.execute('SELECT COUNT(*) AS count FROM stock_wholesale_bills WHERE DATE(generated_at) = CURRENT_DATE');
     const billNumber = `WS-${today}-${String(Number(countRows[0]?.count || 0) + 1).padStart(3, '0')}`;
     const totalAmount = body.items.reduce((sum, item) => sum + Number(item.quantity) * Number(item.unit_price), 0);
-    const result = await query(
-      `INSERT INTO stock_wholesale_bills (bill_number, customer_name, note, total_amount, generated_by)
-       VALUES (:bill_number, :customer_name, :note, :total_amount, :generated_by)`,
-      {
-        bill_number: billNumber,
-        customer_name: body.customer_name || null,
-        note: body.note || null,
-        total_amount: totalAmount,
-        generated_by: req.user.id
-      }
+    const [result] = await connection.execute(
+      `INSERT INTO stock_wholesale_bills (order_id, bill_number, customer_name, note, total_amount, generated_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        body.order_id || null,
+        billNumber,
+        body.customer_name || null,
+        body.note || null,
+        totalAmount,
+        req.user.id
+      ]
     );
-    await Promise.all(body.items.map((item) => query(
+    for (const item of body.items) {
+      await connection.execute(
       `INSERT INTO stock_wholesale_bill_items (
          bill_id, stock_item_id, item_name, item_code, branch_name, branch_code,
          quantity, unit_price, line_total
        )
-       VALUES (
-         :bill_id, :stock_item_id, :item_name, :item_code, :branch_name, :branch_code,
-         :quantity, :unit_price, :line_total
-       )`,
-      {
-        bill_id: result.insertId,
-        stock_item_id: item.stock_item_id || null,
-        item_name: item.item_name,
-        item_code: item.item_code || null,
-        branch_name: item.branch_name || null,
-        branch_code: item.branch_code || null,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        line_total: Number(item.quantity) * Number(item.unit_price)
-      }
-    )));
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          result.insertId,
+          item.stock_item_id || null,
+          item.item_name,
+          item.item_code || null,
+          item.branch_name || null,
+          item.branch_code || null,
+          item.quantity,
+          item.unit_price,
+          Number(item.quantity) * Number(item.unit_price)
+        ]
+      );
+    }
+    if (body.order_id) {
+      await connection.execute('UPDATE orders SET wholesale_bill_id = ? WHERE id = ?', [result.insertId, body.order_id]);
+    }
+    await connection.commit();
     const bill = await getWholesaleBill(result.insertId);
     res.status(201).json({ ...bill, message: 'Wholesale stock bill generated successfully.' });
+  } catch (error) {
+    await connection.rollback();
+    next(error);
+  } finally {
+    connection.release();
+  }
+});
+
+router.get('/wholesale-bills/:id', async (req, res, next) => {
+  try {
+    const bill = await getWholesaleBill(req.params.id);
+    if (!bill) return res.status(404).json({ message: 'Wholesale stock bill not found.' });
+
+    const allowed = await canAccessWholesaleBill(req.user, bill);
+    if (!allowed) {
+      return res.status(403).json({ message: 'You do not have permission to view this wholesale bill.' });
+    }
+
+    res.json(safeWholesaleBillPayload(bill));
   } catch (error) {
     next(error);
   }
 });
 
-router.get('/wholesale-bills/:id/pdf', requireAdminOrCoAdmin, async (req, res, next) => {
+router.get('/wholesale-bills/:id/pdf', async (req, res, next) => {
   try {
     const bill = await getWholesaleBill(req.params.id);
     if (!bill) return res.status(404).json({ message: 'Wholesale stock bill not found.' });
+
+    const allowed = await canAccessWholesaleBill(req.user, bill);
+    if (!allowed) {
+      return res.status(403).json({ message: 'You do not have permission to download this wholesale bill.' });
+    }
+
     sendWholesaleBillPdf(res, bill);
   } catch (error) {
     next(error);
