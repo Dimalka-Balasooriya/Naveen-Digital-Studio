@@ -4,8 +4,12 @@ import { api } from '../../services/api';
 import StatCard from '../../components/StatCard';
 import StatusBadge from '../../components/StatusBadge';
 import { titleCase } from '../../utils/statusDisplay';
+import { useAuth } from '../../context/AuthContext';
+import { normalizeRole } from '../../utils/roles';
 
 export default function ProductionDashboard() {
+  const { user } = useAuth();
+  const isDesignTeam = normalizeRole(user?.role) === 'DESIGN_TEAM';
   const [orders, setOrders] = useState([]);
   const [stats, setStats] = useState({});
   const [reminders, setReminders] = useState([]);
@@ -22,6 +26,7 @@ export default function ProductionDashboard() {
   async function load(overrides = {}) {
     setError('');
     const nextOrderStatusFilter = overrides.orderStatusFilter ?? orderStatusFilter;
+    const correctionOnly = isDesignTeam && nextOrderStatusFilter === 'correction';
     const [
       ordersRes,
       statsRes,
@@ -30,7 +35,11 @@ export default function ProductionDashboard() {
       commissionsRes,
       allCommissionsRes
     ] = await Promise.allSettled([
-      api.get('/production/orders', { params: { status_id: nextOrderStatusFilter || undefined, _: Date.now() } }),
+      api.get('/production/orders', { params: {
+        status_id: correctionOnly ? undefined : nextOrderStatusFilter || undefined,
+        status: correctionOnly ? 'Correction' : undefined,
+        _: Date.now()
+      } }),
       api.get('/production/profile/stats'),
       api.get('/reminders'),
       api.get('/production/statuses'),
@@ -38,7 +47,11 @@ export default function ProductionDashboard() {
       api.get('/commissions/all', { params: { month: commissionMonth } })
     ]);
 
-    if (ordersRes.status === 'fulfilled') setOrders(ordersRes.value.data);
+    if (ordersRes.status === 'fulfilled') setOrders(correctionOnly
+      ? ordersRes.value.data.filter((order) => order.status_name === 'Correction'
+        && (Number(order.assigned_employee_id) === Number(user.id)
+          || Number(order.current_assignment_employee_id) === Number(user.id)))
+      : ordersRes.value.data);
     else {
       setOrders([]);
       setError(ordersRes.reason?.response?.data?.message || 'Assigned orders could not be loaded.');
@@ -139,7 +152,7 @@ export default function ProductionDashboard() {
         </div>
       ) : null}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Assigned Orders" value={stats.assigned_orders} />
+        <StatCard label="Assigned Orders" value={isDesignTeam && orderStatusFilter === 'correction' ? orders.length : stats.assigned_orders} />
         <StatCard label="Completed Orders" value={stats.completed_orders} tone="green" />
         <StatCard label="Fast Orders" value={stats.fast_orders} tone="orange" />
         <StatCard label="Average Progress" value={`${stats.average_progress || 0}%`} tone="teal" />
@@ -256,6 +269,7 @@ export default function ProductionDashboard() {
             onChange={(event) => applyOrderStatusFilter(event.target.value)}
           >
             <option value="">All Statuses</option>
+            {isDesignTeam ? <option value="correction">Correction</option> : null}
             {statuses.map((status) => <option key={status.id} value={status.id}>{titleCase(status.name)}</option>)}
           </select>
         </div>
