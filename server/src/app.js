@@ -1,3 +1,4 @@
+import callingRoutes from './routes/calling.routes.js';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -59,6 +60,7 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/lookups', lookupRoutes);
 app.use('/api/orders', orderRoutes);
+app.use('/api/calling', callingRoutes);
 app.use('/api/production', productionRoutes);
 app.use('/api/reminders', reminderRoutes);
 app.use('/api/reports', reportsRoutes);

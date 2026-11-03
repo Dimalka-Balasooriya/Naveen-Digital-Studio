@@ -60,13 +60,14 @@ const orderSchema = z.object({
 });
 
 const listSql = `
-  SELECT o.*, c.name AS customer_name, c.phone AS customer_phone, c.address AS customer_address,
+  SELECT o.*, COALESCE(calling.calling_status, 'Not Called') AS calling_status, c.name AS customer_name, c.phone AS customer_phone, c.address AS customer_address,
     p.name AS product_name, fp.name AS facebook_page_name, fp.whatsapp_number AS facebook_page_whatsapp_number,
     cs.name AS courier_service_name,
     s.name AS status_name, s.color AS status_color,
     e.name AS assigned_employee_name, cc.commission_amount AS current_commission_amount,
     co_cc.employee_id AS current_co_admin_id, co_cc.commission_amount AS current_co_admin_commission_amount
   FROM orders o
+  LEFT JOIN order_calling_state calling ON calling.order_id = o.id
   JOIN customers c ON c.id = o.customer_id
   JOIN products p ON p.id = o.product_id
   LEFT JOIN facebook_pages fp ON fp.id = o.facebook_page_id
@@ -93,6 +94,7 @@ const orderListSql = `
   SELECT
     o.id,
     o.order_number,
+    COALESCE(calling.calling_status, 'Not Called') AS calling_status,
     o.product_id,
     o.facebook_page_id,
     o.courier_service_id,
@@ -119,6 +121,7 @@ const orderListSql = `
     s.color AS status_color,
     e.name AS assigned_employee_name
   FROM orders o
+  LEFT JOIN order_calling_state calling ON calling.order_id = o.id
   JOIN customers c ON c.id = o.customer_id
   JOIN products p ON p.id = o.product_id
   LEFT JOIN facebook_pages fp ON fp.id = o.facebook_page_id

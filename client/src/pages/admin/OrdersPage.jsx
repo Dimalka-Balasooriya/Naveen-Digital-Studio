@@ -1,3 +1,4 @@
+import CallingHistory from '../../components/CallingHistory';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Download, Edit3, History, Plus, Printer, ReceiptText, Search, Trash2 } from 'lucide-react';
 import { api } from '../../services/api';
@@ -1190,6 +1191,7 @@ export default function OrdersPage() {
                 <th className="px-4 py-3">Product</th>
                 <th className="px-4 py-3">Qty</th>
                 <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Calling Status</th>
                 <th className="px-4 py-3">Assignee</th>
                 <th className="px-4 py-3">Courier / Tracking</th>
                 <th className="px-4 py-3">Needed</th>
@@ -1216,6 +1218,7 @@ export default function OrdersPage() {
                       <td className="px-4 py-3 text-sm text-teal-800">{group.orders.map((order) => order.product_name).join(', ')}</td>
                       <td className="px-4 py-3 font-semibold text-teal-950">{group.total_quantity}</td>
                       <td className="px-4 py-3 text-sm text-teal-700">Multiple statuses</td>
+                      <td className="px-4 py-3 text-sm text-teal-700">See sub orders</td>
                       <td className="px-4 py-3 text-sm text-teal-700">Sub assignees</td>
                       <td className="px-4 py-3 text-sm text-teal-700">Sub tracking</td>
                       <td className="px-4 py-3">{group.createdDate}</td>
@@ -1239,6 +1242,7 @@ export default function OrdersPage() {
                       <td className="px-4 py-3">{order.product_name}</td>
                       <td className="px-4 py-3 font-semibold">{order.order_quantity || 1}</td>
                       <td className="px-4 py-3"><StatusBadge color={order.status_color}>{order.status_name}</StatusBadge></td>
+                      <td className="px-4 py-3">{order.calling_status || 'Not Called'}</td>
                       <td className="px-4 py-3">{order.assigned_employee_name || 'Unassigned'}</td>
                       <td className="px-4 py-3">
                         <p className="font-medium text-slate-900">{order.courier_service_name || 'Not selected'}</p>
@@ -1260,7 +1264,7 @@ export default function OrdersPage() {
               ))}
               {!orders.length ? (
                 <tr>
-                  <td colSpan="10" className="px-4 py-8 text-center text-sm text-slate-500">
+                  <td colSpan="11" className="px-4 py-8 text-center text-sm text-slate-500">
                     No orders found for this account and filter.
                   </td>
                 </tr>
@@ -1862,6 +1866,10 @@ export default function OrdersPage() {
             </div>
           </section>
         ) : null}
+        {detailOrder ? <section className="my-5 rounded-md border border-slate-200 p-4">
+          <h4 className="font-semibold text-slate-950">Calling Status: {detailOrder.calling_status || 'Not Called'}</h4>
+          <CallingHistory orderId={detailOrder.id} />
+        </section> : null}
         <div className="grid gap-5 lg:grid-cols-4">
           <section>
             <h4 className="font-semibold text-slate-950">Status Updates</h4>

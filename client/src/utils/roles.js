@@ -21,3 +21,7 @@ export function isCoAdmin(role) {
 export function isWorkerRole(role) {
   return ['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM'].includes(normalizeRole(role));
 }
+
+export function homePath(role) {
+  return normalizeRole(role) === 'CALLING_AGENT' ? '/calling' : isAdminRole(role) ? '/admin' : '/production';
+}

@@ -172,6 +172,7 @@ export default function EmployeesPage() {
             <option value="CO_ADMIN">Co-admin</option>
             <option value="PRODUCTION_EMPLOYEE">Production Employee</option>
             <option value="DESIGN_TEAM">Design Team</option>
+            <option value="CALLING_AGENT">Calling Agent</option>
           </select></Field>
           <Field label={editingEmployee ? 'New password' : 'Password'}>
             <PasswordField autoComplete="new-password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} required={!editingEmployee} />

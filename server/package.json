@@ -8,7 +8,10 @@
     "build": "node --check src/server.js",
     "dev": "nodemon src/server.js",
     "seed:admin": "node src/scripts/seed-admin.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "migrate:calling": "node src/scripts/apply-calling-migration.js",
+    "test:calling": "node --test test/calling.test.js",
+    "test:calling:integration": "node --test test/calling-release-regression.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

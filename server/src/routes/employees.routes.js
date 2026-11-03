@@ -11,7 +11,7 @@ const employeeSchema = z.object({
   email: z.string().email(),
   phone: z.string().optional().nullable(),
   address: z.string().optional().nullable(),
-  role: z.enum(['OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM', 'admin', 'production', 'design']),
+  role: z.enum(['OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM', 'CALLING_AGENT', 'admin', 'production', 'design']),
   password: z.string().min(6).optional(),
   is_active: z.boolean().optional()
 });

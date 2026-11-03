@@ -45,6 +45,9 @@ export async function authenticate(req, res, next) {
     }
 
     req.user = { ...users[0], role: normalizeRole(users[0].role), raw_role: users[0].role };
+    if (req.user.role === 'CALLING_AGENT' && !['/api/auth', '/api/calling'].includes(req.baseUrl)) {
+      return res.status(403).json({ message: 'Calling agents can only access calling management.' });
+    }
     next();
   } catch (error) {
     return res.status(401).json({ message: 'Invalid or expired token.' });

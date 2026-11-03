@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { BarChart3, Bell, Boxes, ClipboardList, FileSpreadsheet, HelpCircle, LogOut, Mail, Settings, Users, WalletCards, Warehouse } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
-import { isAdminRole, isCoAdmin } from '../utils/roles';
+import { isAdminRole, isCoAdmin, normalizeRole } from '../utils/roles';
 import StudioLogo from './StudioLogo';
 
 const adminLinks = [
@@ -27,13 +27,14 @@ const productionLinks = [
 
 export default function DashboardLayout() {
   const { user, logout } = useAuth();
-  const links = isAdminRole(user?.role) ? adminLinks : productionLinks;
+  const isCallingAgent = normalizeRole(user?.role) === 'CALLING_AGENT';
+  const links = isCallingAgent ? [{ to: '/calling', label: 'Calling Agent', icon: ClipboardList }] : isAdminRole(user?.role) ? adminLinks : productionLinks;
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [rearrangeReminders, setRearrangeReminders] = useState([]);
   const [unreadMessages, setUnreadMessages] = useState(0);
 
   useEffect(() => {
-    if (!user) return undefined;
+    if (!user || isCallingAgent) return undefined;
     let isMounted = true;
 
     async function loadUnreadMessages() {
@@ -144,7 +145,7 @@ export default function DashboardLayout() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <NavLink
+            {!isCallingAgent ? <NavLink
               to="/messages"
               className="relative flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-700 shadow-sm transition hover:bg-teal-50 hover:text-teal-700"
               title="Messages"
@@ -155,7 +156,7 @@ export default function DashboardLayout() {
                   {unreadMessages}
                 </span>
               ) : null}
-            </NavLink>
+            </NavLink> : null}
           {isCoAdmin(user?.role) ? <div className="relative">
             <button
               type="button"
