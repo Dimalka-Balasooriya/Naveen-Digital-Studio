@@ -91,6 +91,23 @@ test('all six statuses remain independent and historical rows are preserved', as
   for (const [i, status] of ['Call Back', 'No Answer', 'Confirmed', 'Wrong Number', 'Completed', 'Not Called'].entries()) await db.update(input(status, i));
   assert.equal(db.history.length, 6); assert.equal(db.history[0][2], 'Call Back'); assert.equal(db.state.version, 6);
 });
+test('an eligible order can advance through multiple calling steps with one history entry per save', async () => {
+  const db = fakeDatabase();
+  let version = 0;
+  for (const status of ['No Answer', 'Call Back', 'Confirmed']) {
+    const request = input(status, version);
+    const result = await db.update(request);
+    version += 1;
+    assert.equal(result.calling_status, status);
+    assert.equal(result.calling_version, version);
+    assert.equal((await db.update(request)).replayed, true);
+    assert.deepEqual(queueQuery({ calling_status: status }).params, [status]);
+  }
+  assert.deepEqual(db.history.map((entry) => entry.slice(1, 3)), [
+    ['Not Called', 'No Answer'], ['No Answer', 'Call Back'], ['Call Back', 'Confirmed']
+  ]);
+  assert.equal(db.order.production_status, 'Editing Send');
+});
 test('lost-response retry, including after a later change, never duplicates or reverts', async () => {
   const db = fakeDatabase(), first = input();
   await db.update(first); assert.equal((await db.update(first)).replayed, true);

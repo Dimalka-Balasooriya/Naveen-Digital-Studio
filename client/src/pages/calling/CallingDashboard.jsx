@@ -7,7 +7,7 @@ import { createRequestId } from '../../utils/requestId';
 
 const statuses = ['Not Called', 'No Answer', 'Call Back', 'Confirmed', 'Wrong Number', 'Completed', 'Correction (Call Agent)'];
 
-function CallingOrder({ order, onSaved, onBusy, disabled }) {
+function CallingOrder({ order, callingFilter, onSaved, onBusy, disabled }) {
   const [status, setStatus] = useState(order.calling_status);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -30,7 +30,7 @@ function CallingOrder({ order, onSaved, onBusy, disabled }) {
       }
       const { data } = await api.patch(`/calling/orders/${order.id}/status`, request.current.body);
       request.current = null; setNotes(''); setNotice(data.message);
-      onSaved();
+      onSaved(order.id, data);
     } catch (error) {
       // Keep both the draft and request ID: retrying a lost response is idempotent.
       setError(error.response?.data?.message || 'Could not confirm the save. Retry with the same details to safely confirm it.');
@@ -64,12 +64,16 @@ function CallingOrder({ order, onSaved, onBusy, disabled }) {
     </form>
     {error ? <p role="alert" className="mt-3 text-sm text-rose-700">{error}</p> : null}
     {notice ? <p role="status" className="mt-3 text-sm text-teal-700">{notice}</p> : null}
+    {callingFilter && order.calling_status !== callingFilter ? (
+      <p className="mt-2 text-sm text-slate-600">Saved outside the current calling status filter.</p>
+    ) : null}
     {historyOpen ? <CallingHistory orderId={order.id} revision={order.calling_version} /> : null}
   </article>;
 }
 
 export default function CallingDashboard() {
   const [filter, setFilter] = useState('');
+  const [callingFilter, setCallingFilter] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -88,7 +92,7 @@ export default function CallingDashboard() {
     if (pendingSearch) return undefined;
     const controller = new AbortController();
     setLoading(true); setError('');
-    api.get('/calling/orders', { params: { page, limit: 25, production_status: filter || undefined, search: search || undefined }, signal: controller.signal })
+    api.get('/calling/orders', { params: { page, limit: 25, production_status: filter || undefined, calling_status: callingFilter || undefined, search: search || undefined }, signal: controller.signal })
       .then(({ data: result }) => {
         if (controller.signal.aborted) return;
         if (page > result.pagination.totalPages) { setPage(result.pagination.totalPages); return; }
@@ -97,14 +101,28 @@ export default function CallingDashboard() {
       .catch((error) => { if (!controller.signal.aborted) setError(error.response?.data?.message || 'Calling orders could not be loaded.'); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [filter, page, revision, search, pendingSearch]);
+  }, [filter, callingFilter, page, revision, search, pendingSearch]);
+
+  function applySavedStatus(orderId, result) {
+    // Keep the current page stable while the agent is working through an order.
+    setData((current) => ({
+      ...current,
+      orders: current.orders.map((order) => order.id === orderId ? {
+        ...order, calling_status: result.calling_status, calling_version: result.calling_version
+      } : order)
+    }));
+  }
   return <div className="space-y-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><h1 className="text-xl font-semibold text-slate-950">Calling Agent Dashboard</h1>
         <p className="text-sm text-slate-500">{data.pagination.total} eligible orders · Not Called, Call Back, then No Answer first.</p></div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <select aria-label="Production status filter" className={inputClass} disabled={busy > 0} value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1); }}>
           <option value="">All</option><option>Editing Send</option><option>Correction Send</option>
+        </select>
+        <select aria-label="Calling status filter" className={inputClass} disabled={busy > 0} value={callingFilter} onChange={(event) => { setCallingFilter(event.target.value); setPage(1); }}>
+          <option value="">All Calling Statuses</option>
+          {statuses.map((value) => <option key={value}>{value}</option>)}
         </select>
         <button disabled={refreshing || busy > 0} onClick={() => setRevision((value) => value + 1)} className="rounded-md border bg-white px-4 py-2 text-sm disabled:opacity-50">Refresh</button>
       </div>
@@ -121,7 +139,7 @@ export default function CallingDashboard() {
     {error ? <p role="alert" className="rounded bg-rose-50 p-3 text-rose-700">{error}</p> : null}
     {refreshing ? <p role="status" className="text-sm text-slate-500">Refreshing orders...</p> : null}
     <div aria-busy={refreshing} className={refreshing ? 'pointer-events-none opacity-60' : ''}>
-      <div className="space-y-4">{data.orders.map((order) => <CallingOrder key={order.id} order={order} disabled={refreshing || Boolean(error)} onSaved={() => setRevision((value) => value + 1)} onBusy={(delta) => setBusy((value) => value + delta)} />)}</div>
+      <div className="space-y-4">{data.orders.map((order) => <CallingOrder key={order.id} order={order} callingFilter={callingFilter} disabled={refreshing || Boolean(error)} onSaved={applySavedStatus} onBusy={(delta) => setBusy((value) => value + delta)} />)}</div>
     </div>
     {!refreshing && !error && !data.orders.length ? <p role="status" className="rounded-md border bg-white p-5 text-slate-500">No matching orders found</p> : null}
     <div className="flex items-center justify-between text-sm">
