@@ -61,7 +61,7 @@ export default function ProductionDashboard() {
     if (statusesRes.status === 'fulfilled') setStatuses(statusesRes.value.data);
     else {
       const fallback = await api.get('/lookups/statuses').catch(() => ({ data: [] }));
-      const allowedNames = new Set(['new', 'editing', 'editing done', 'correction send', 'correction done', 'save', 'message send']);
+      const allowedNames = new Set(['new', 'editing', 'editing done', 'editing send', 'correction send', 'correction done', 'save', 'message send']);
       setStatuses(fallback.data.filter((status) => allowedNames.has(String(status.name || '').trim().toLowerCase())));
     }
     if (commissionsRes.status === 'fulfilled') setCommissions(commissionsRes.value.data);
@@ -277,14 +277,25 @@ export default function ProductionDashboard() {
           {orders.map((order) => (
             <article key={order.id} className={`p-5 ${order.is_fast ? 'bg-orange-50/60' : order.is_future_order ? 'bg-sky-50/60' : 'bg-white'}`}>
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div>
+                <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <h4 className="font-semibold text-slate-950">{order.order_number}</h4>
                     <StatusBadge color={order.status_color}>{order.status_name}</StatusBadge>
+                    {isDesignTeam ? (
+                      <StatusBadge color={order.calling_status === 'Correction (Call Agent)' ? 'orange' : 'slate'}>
+                        {order.calling_status === 'Correction (Call Agent)' ? order.calling_status : `Calling: ${order.calling_status || 'Not Called'}`}
+                      </StatusBadge>
+                    ) : null}
                     {order.is_fast ? <span className="inline-flex items-center gap-1 rounded bg-orange-100 px-2 py-1 text-xs font-semibold text-orange-700"><Zap size={13} />Fast</span> : null}
                     {order.is_future_order ? <span className="inline-flex items-center gap-1 rounded bg-sky-100 px-2 py-1 text-xs font-semibold text-sky-700"><Clock size={13} />Future</span> : null}
                     {isWholesaleOrder(order) ? <span className="inline-flex items-center gap-1 rounded bg-purple-100 px-2 py-1 text-xs font-semibold text-purple-700"><ReceiptText size={13} />Wholesale</span> : null}
                   </div>
+                  {isDesignTeam && order.calling_status === 'Correction (Call Agent)' && order.calling_correction_note ? (
+                    <div className="mt-2 text-sm text-slate-700">
+                      <p className="font-semibold text-slate-950">Correction Note from Calling Agent</p>
+                      <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{order.calling_correction_note}</p>
+                    </div>
+                  ) : null}
                   <p className="mt-1 text-sm text-slate-600">{order.customer_name} · {order.customer_phone} · {order.product_name} · Qty {order.order_quantity || 1}</p>
                   <p className="mt-1 flex items-center gap-1 text-xs text-slate-500"><Clock size={14} /> Needed {order.needed_date?.slice(0, 10)}</p>
                   {order.is_future_order ? <p className="mt-1 text-xs font-semibold text-sky-700">Future needed {(order.future_needed_date || order.needed_date)?.slice(0, 10)}</p> : null}

@@ -24,7 +24,7 @@ test('Calling release: real MySQL migration, transactions, permissions and order
     await db.query("INSERT INTO employees (role_id,name,email,password_hash) VALUES (1,'Owner','owner@test.invalid','unused'),(2,'Co Admin','co@test.invalid','unused'),(3,'Designer','design@test.invalid','unused')");
     await db.query("INSERT INTO customers (name,phone) VALUES ('Test Customer','0000000000')");
     await db.query("INSERT INTO products (name) VALUES ('Test Product')");
-    await db.query("INSERT INTO order_statuses (name) VALUES ('Editing Done'),('Correction Done'),('Correction'),('Correction Send'),('Editing'),('Billing Done')");
+    await db.query("INSERT INTO order_statuses (name) VALUES ('Editing Send'),('Correction Send'),('Correction'),('Editing Done'),('Correction Done'),('Editing Sent')");
     for (let id = 1; id <= 10; id++) {
       const status = id <= 6 ? (id % 2 ? 1 : 2) : id - 4;
       await db.execute(`INSERT INTO orders (id,order_number,customer_id,product_id,status_id,needed_date,created_by,assigned_employee_id,assigned_co_admin_id,created_at) VALUES (?, ?,1,1,?,'2026-01-01',1,3,2,?)`, [id, `TEST-${id}`, status, `2026-01-${String(id).padStart(2,'0')} 00:00:00`]);
@@ -42,6 +42,9 @@ test('Calling release: real MySQL migration, transactions, permissions and order
       const columns = (await db.query('SHOW COLUMNS FROM orders'))[0].map(row => row.Field);
       assert.ok(!columns.includes('recipient_city')); assert.ok(!columns.includes('is_exchange'));
     });
+    const correctionMigration = await readFile(new URL('../../database/calling-agent-correction-status-migration.sql', import.meta.url), 'utf8');
+    await db.query(correctionMigration);
+    await db.query(correctionMigration);
     await db.query("INSERT INTO employees (role_id,name,email,password_hash) SELECT id,'Caller','caller@test.invalid','unused' FROM roles WHERE name='CALLING_AGENT'");
     const caller = (await db.query("SELECT id FROM employees WHERE email='caller@test.invalid'"))[0][0].id;
     const body = (status, version=0) => ({status, notes:'Test note', expected_version:version, request_id:randomUUID()});
@@ -50,7 +53,7 @@ test('Calling release: real MySQL migration, transactions, permissions and order
     await t.test('exact eligibility, default status and pagination execute against MySQL', async () => {
       assert.deepEqual((await queue({})).map(o=>o.id), [1,2,3,4,5,6]);
       assert.ok((await queue({})).every(o=>o.calling_status==='Not Called' && o.calling_version===0));
-      assert.deepEqual((await queue({production_status:'Correction Done'})).map(o=>o.id),[2,4,6]);
+      assert.deepEqual((await queue({production_status:'Correction Send'})).map(o=>o.id),[2,4,6]);
       assert.deepEqual((await queue({page:2,limit:2})).map(o=>o.id),[3,4]);
       for (const id of [7,8,9,10]) await assert.rejects(update(id,body('Confirmed')), e=>e.status===409);
     });
@@ -62,6 +65,19 @@ test('Calling release: real MySQL migration, transactions, permissions and order
       assert.equal(history.length,1); assert.equal(history[0].previous_status,'Not Called'); assert.equal(history[0].new_status,'No Answer'); assert.equal(history[0].agent_id,caller); assert.equal(history[0].notes,'Test note');
       assert.deepEqual((await db.query('SELECT * FROM orders ORDER BY id'))[0],beforeOrders);
       assert.equal((await db.query('SELECT COUNT(*) n FROM order_status_history'))[0][0].n,0);
+    });
+    await t.test('database search matches exact/partial order identifiers and customer names across pages', async () => {
+      for (const search of ['TEST-5', 'test-5', '  TeSt-5  ', '5']) {
+        assert.deepEqual((await queue({ search, limit: 2 })).map(o => o.id), [5]);
+      }
+      assert.deepEqual((await queue({ search: 'EST-' })).map(o => o.id), [6,2,1,3,4,5]);
+      assert.deepEqual((await queue({ search: '  cUsToM  ' })).map(o => o.id), [6,2,1,3,4,5]);
+      assert.deepEqual((await queue({ search: 'customer', production_status: 'Correction Send' })).map(o => o.id), [6,2,4]);
+      assert.deepEqual((await queue({ search: 'customer', production_status: 'Editing Send' })).map(o => o.id), [1,3,5]);
+      const spec = queueQuery({ search: 'customer', page: 2, limit: 2 });
+      assert.equal((await db.execute(spec.countSql, spec.params))[0][0].total, 6);
+      assert.deepEqual((await queue({ search: 'customer', page: 2, limit: 2 })).map(o => o.id), [1,3]);
+      for (const search of ['missing', '%', '_', "' OR 1=1 --", 'TEST-10']) assert.deepEqual(await queue({ search }), []);
     });
     await t.test('failed history write rolls back request and state in MySQL', async () => {
       const request=body('Confirmed');
@@ -96,6 +112,18 @@ test('Calling release: real MySQL migration, transactions, permissions and order
       assert.equal((await api('/calling/orders/1/history',3)).status,403);
       assert.equal((await api('/calling/orders/1/status',1,'PATCH',body('Confirmed',1))).status,403);
     });
+    await t.test('search endpoint preserves authorization and filtered pagination totals', async () => {
+      const path = '/calling/orders?search=%20tEsT-%20&production_status=Editing%20Send&page=2&limit=2';
+      assert.equal((await api(path)).status, 401);
+      for (const id of [1,2,3]) assert.equal((await api(path,id)).status, 403);
+      const response = await api(path,caller);
+      assert.equal(response.status,200);
+      assert.equal(response.body.pagination.total,3);
+      assert.equal(response.body.pagination.page,2);
+      assert.deepEqual(response.body.orders.map(o=>o.id),[5]);
+      assert.equal((await api('/calling/orders?search=absent',caller)).body.pagination.total,0);
+      assert.equal((await api('/calling/orders?search='+ 'x'.repeat(121),caller)).status,400);
+    });
     await t.test('existing admin list/detail return calling state and normal edit remains available',async()=>{
       const listing=await api('/orders',1);assert.equal(listing.status,200,JSON.stringify(listing.body));
       const detail=await api('/orders/1',1);assert.equal(detail.status,200,JSON.stringify(detail.body));
@@ -104,6 +132,42 @@ test('Calling release: real MySQL migration, transactions, permissions and order
       assert.equal(edited.status,200,JSON.stringify(edited.body));assert.equal(edited.body.calling_status,'No Answer');
       assert.equal((await db.query('SELECT status_id FROM orders WHERE id=1'))[0][0].status_id,1);
       const co=await api('/orders',2);assert.equal(co.status,200,JSON.stringify(co.body));
+    });
+    await t.test('calling correction persists and is visible to current designer and admins', async () => {
+      await db.query("INSERT INTO employees (role_id,name,email,password_hash) VALUES (3,'Other Designer','other@test.invalid','unused')");
+      const [[other]] = await db.query("SELECT id FROM employees WHERE email='other@test.invalid'");
+      await db.execute("INSERT INTO assignment_history (order_id, old_employee_id, new_employee_id, changed_by_admin_id, changed_by_role) VALUES (2, ?, 3, 1, 'OWNER')", [other.id]);
+      const correction = 'Correction (Call Agent)';
+      const notes = 'Crop the left edge.\nKeep the original colors.\n' + 'x'.repeat(1800);
+      assert.equal((await api('/calling/orders/2/status',3,'PATCH',body(correction,1))).status,403);
+      assert.equal((await api('/calling/orders/2/status',caller,'PATCH',{...body(correction,1),notes})).body.calling_status,correction);
+      const designer = await api('/production/orders',3);
+      assert.equal(designer.body.find(order => order.id === 2)?.calling_status,correction);
+      assert.equal(designer.body.find(order => order.id === 2)?.calling_correction_note,notes);
+      assert.equal(designer.body.find(order => order.id === 2)?.status_name,'Correction Send');
+      assert.ok(!(await api('/production/orders',other.id)).body.some(order => order.id === 2));
+      assert.ok([403, 404].includes((await api('/orders/2',other.id)).status));
+      for (const admin of [1,2]) {
+        assert.equal((await api('/orders',admin)).body.orders.find(order => order.id === 2)?.calling_status,correction);
+        const { history } = (await api('/calling/orders/2/history',admin)).body;
+        assert.equal(history[0].new_status,correction);
+        assert.equal(history[0].agent_id,caller);
+        assert.equal(history[0].notes,notes);
+        assert.ok(history[0].changed_at);
+      }
+      for (const worker of [3,other.id]) assert.equal((await api('/calling/orders/2/history',worker)).status,403);
+      assert.equal((await api('/calling/orders/2/status',caller,'PATCH',body('Confirmed',2))).status,200);
+      const confirmed = (await api('/production/orders',3)).body.find(order => order.id === 2);
+      assert.equal(confirmed.calling_correction_note,null);
+      assert.equal((await api('/calling/orders/2/status',caller,'PATCH',{...body(correction,3),notes:'  '})).status,200);
+      const emptyCorrection = (await api('/production/orders',3)).body.find(order => order.id === 2);
+      assert.equal(emptyCorrection.calling_status,correction);
+      assert.equal(emptyCorrection.calling_correction_note,null);
+      for (const admin of [1,2]) {
+        const { history } = (await api('/calling/orders/2/history',admin)).body;
+        const corrections = history.filter(entry => entry.new_status === correction);
+        assert.deepEqual(corrections.map(entry => entry.notes),[null,notes]);
+      }
     });
     await t.test('Correction filter still returns only assigned Correction orders',async()=>{
       const result=await api('/production/orders?status=Correction',3);

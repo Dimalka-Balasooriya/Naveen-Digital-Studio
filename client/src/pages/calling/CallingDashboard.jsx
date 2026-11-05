@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../../services/api';
 import { Field, inputClass } from '../../components/FormFields';
 import CallingHistory from '../../components/CallingHistory';
+import CallNowButton from '../../components/CallNowButton';
 
-const statuses = ['Not Called', 'No Answer', 'Call Back', 'Confirmed', 'Wrong Number', 'Completed'];
+const statuses = ['Not Called', 'No Answer', 'Call Back', 'Confirmed', 'Wrong Number', 'Completed', 'Correction (Call Agent)'];
 
 function CallingOrder({ order, onSaved, onBusy, disabled }) {
   const [status, setStatus] = useState(order.calling_status);
@@ -37,7 +38,10 @@ function CallingOrder({ order, onSaved, onBusy, disabled }) {
       <div><h3 className="font-semibold text-slate-950">{order.order_number}</h3>
         <p className="text-sm text-slate-500">Order ID: {order.id}</p>
         <p className="mt-1 font-medium">{order.customer_name}</p>
-        <p className="text-sm">Customer contact: {order.customer_phone || 'Not available'}</p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <p className="break-all text-sm">Customer contact: {order.customer_phone || 'Not available'}</p>
+          <CallNowButton phone={order.customer_phone} />
+        </div>
         {order.recipient_contact_number ? <p className="text-sm">Recipient contact: {order.recipient_contact_number}</p> : null}
       </div>
       <div className="text-sm"><p>Production: <strong>{order.production_status}</strong></p>
@@ -63,16 +67,25 @@ function CallingOrder({ order, onSaved, onBusy, disabled }) {
 
 export default function CallingDashboard() {
   const [filter, setFilter] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [data, setData] = useState({ orders: [], pagination: { total: 0, totalPages: 1 } });
+  const pendingSearch = searchInput.trim() !== search;
+  const refreshing = loading || pendingSearch;
   useEffect(() => {
+    const timer = setTimeout(() => { setSearch(searchInput.trim()); setPage(1); }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+  useEffect(() => {
+    if (pendingSearch) return undefined;
     const controller = new AbortController();
     setLoading(true); setError('');
-    api.get('/calling/orders', { params: { page, limit: 25, production_status: filter || undefined }, signal: controller.signal })
+    api.get('/calling/orders', { params: { page, limit: 25, production_status: filter || undefined, search: search || undefined }, signal: controller.signal })
       .then(({ data: result }) => {
         if (controller.signal.aborted) return;
         if (page > result.pagination.totalPages) { setPage(result.pagination.totalPages); return; }
@@ -81,28 +94,37 @@ export default function CallingDashboard() {
       .catch((error) => { if (!controller.signal.aborted) setError(error.response?.data?.message || 'Calling orders could not be loaded.'); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [filter, page, revision]);
+  }, [filter, page, revision, search, pendingSearch]);
   return <div className="space-y-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><h1 className="text-xl font-semibold text-slate-950">Calling Agent Dashboard</h1>
         <p className="text-sm text-slate-500">{data.pagination.total} eligible orders · Not Called, Call Back, then No Answer first.</p></div>
       <div className="flex gap-2">
         <select aria-label="Production status filter" className={inputClass} disabled={busy > 0} value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1); }}>
-          <option value="">All</option><option>Editing Done</option><option>Correction Done</option>
+          <option value="">All</option><option>Editing Send</option><option>Correction Send</option>
         </select>
-        <button disabled={loading || busy > 0} onClick={() => setRevision((value) => value + 1)} className="rounded-md border bg-white px-4 py-2 text-sm disabled:opacity-50">Refresh</button>
+        <button disabled={refreshing || busy > 0} onClick={() => setRevision((value) => value + 1)} className="rounded-md border bg-white px-4 py-2 text-sm disabled:opacity-50">Refresh</button>
       </div>
     </div>
-    {error ? <p role="alert" className="rounded bg-rose-50 p-3 text-rose-700">{error}</p> : null}
-    {loading ? <p role="status" className="text-sm text-slate-500">Refreshing orders...</p> : null}
-    <div aria-busy={loading} className={loading ? 'pointer-events-none opacity-60' : ''}>
-      <div className="space-y-4">{data.orders.map((order) => <CallingOrder key={order.id} order={order} disabled={loading || Boolean(error)} onSaved={() => setRevision((value) => value + 1)} onBusy={(delta) => setBusy((value) => value + delta)} />)}</div>
+    <div className="flex flex-wrap items-center gap-2">
+      <input type="search" aria-label="Search orders" placeholder="Search by Order ID or Customer Name..."
+        maxLength={120} disabled={busy > 0} value={searchInput}
+        onChange={(event) => { setSearchInput(event.target.value); setPage(1); }}
+        className={`${inputClass} min-w-0 flex-1 basis-64`} />
+      <button type="button" disabled={busy > 0 || !searchInput}
+        onClick={() => { setSearchInput(''); setSearch(''); setPage(1); }}
+        className="min-h-11 rounded-md border bg-white px-4 py-2 text-sm disabled:opacity-50">Clear search</button>
     </div>
-    {!loading && !error && !data.orders.length ? <p className="rounded-md border bg-white p-5 text-slate-500">No eligible orders.</p> : null}
+    {error ? <p role="alert" className="rounded bg-rose-50 p-3 text-rose-700">{error}</p> : null}
+    {refreshing ? <p role="status" className="text-sm text-slate-500">Refreshing orders...</p> : null}
+    <div aria-busy={refreshing} className={refreshing ? 'pointer-events-none opacity-60' : ''}>
+      <div className="space-y-4">{data.orders.map((order) => <CallingOrder key={order.id} order={order} disabled={refreshing || Boolean(error)} onSaved={() => setRevision((value) => value + 1)} onBusy={(delta) => setBusy((value) => value + delta)} />)}</div>
+    </div>
+    {!refreshing && !error && !data.orders.length ? <p role="status" className="rounded-md border bg-white p-5 text-slate-500">No matching orders found</p> : null}
     <div className="flex items-center justify-between text-sm">
-      <button disabled={loading || busy > 0 || page <= 1} onClick={() => setPage(page - 1)} className="rounded border bg-white px-4 py-2 disabled:opacity-50">Previous</button>
+      <button disabled={refreshing || busy > 0 || page <= 1} onClick={() => setPage(page - 1)} className="rounded border bg-white px-4 py-2 disabled:opacity-50">Previous</button>
       <span>Page {page} of {data.pagination.totalPages}</span>
-      <button disabled={loading || busy > 0 || page >= data.pagination.totalPages} onClick={() => setPage(page + 1)} className="rounded border bg-white px-4 py-2 disabled:opacity-50">Next</button>
+      <button disabled={refreshing || busy > 0 || page >= data.pagination.totalPages} onClick={() => setPage(page + 1)} className="rounded border bg-white px-4 py-2 disabled:opacity-50">Next</button>
     </div>
   </div>;
 }

@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 
-export const CALLING_STATUSES = ['Not Called', 'No Answer', 'Call Back', 'Confirmed', 'Wrong Number', 'Completed'];
-export const ELIGIBLE_STATUSES = ['Editing Done', 'Correction Done'];
+export const CALLING_STATUSES = ['Not Called', 'No Answer', 'Call Back', 'Confirmed', 'Wrong Number', 'Completed', 'Correction (Call Agent)'];
+export const ELIGIBLE_STATUSES = ['Editing Send', 'Correction Send'];
 export const callingUpdateSchema = z.object({
   status: z.enum(CALLING_STATUSES), notes: z.string().trim().max(2000).default(''),
   expected_version: z.number().int().nonnegative(), request_id: z.string().uuid()
@@ -11,18 +11,26 @@ export const listSchema = z.object({
   page: z.coerce.number().int().min(1).max(1000000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
   production_status: z.enum(ELIGIBLE_STATUSES).optional(),
-  calling_status: z.enum(CALLING_STATUSES).optional()
+  calling_status: z.enum(CALLING_STATUSES).optional(),
+  search: z.string().trim().max(120).default('')
 });
 export function callingError(message, status) { return Object.assign(new Error(message), { status }); }
 export function callingPriority(status) { return status === 'Not Called' ? 0 : status === 'Call Back' ? 1 : status === 'No Answer' ? 2 : 3; }
-export const eligibleWhere = `BINARY s.name IN ('Editing Done','Correction Done')
+export const eligibleWhere = `BINARY s.name IN (${ELIGIBLE_STATUSES.map((status) => `'${status}'`).join(',')})
   AND COALESCE(o.is_deleted, FALSE)=FALSE AND o.deleted_at IS NULL
   AND COALESCE(o.archived_from_active_list, FALSE)=FALSE`;
 export function queueQuery(input) {
-  const { page, limit, production_status, calling_status } = listSchema.parse(input);
+  const { page, limit, production_status, calling_status, search } = listSchema.parse(input);
   const filters = [eligibleWhere], params = [];
   if (production_status) { filters.push('BINARY s.name = ?'); params.push(production_status); }
   if (calling_status) { filters.push("COALESCE(cs.calling_status, 'Not Called') = ?"); params.push(calling_status); }
+  if (search) {
+    // Literal substring search: %, _ and quotes are data, never SQL/wildcards.
+    filters.push(`(LOCATE(LOWER(?), LOWER(o.order_number)) > 0
+      OR LOCATE(?, CAST(o.id AS CHAR)) > 0
+      OR LOCATE(LOWER(?), LOWER(c.name)) > 0)`);
+    params.push(search, search, search);
+  }
   const from = `FROM orders o JOIN customers c ON c.id=o.customer_id
     JOIN order_statuses s ON s.id=o.status_id
     LEFT JOIN order_calling_state cs ON cs.order_id=o.id WHERE ${filters.join(' AND ')}`;
@@ -49,6 +57,10 @@ export async function updateCalling(connection, { orderId, agentId, body }) {
       o.deleted_at, o.archived_from_active_list FROM orders o JOIN order_statuses s ON s.id=o.status_id
       WHERE o.id=? FOR UPDATE`, [orderId]);
     if (!orders.length) throw callingError('Order not found.', 404);
+    const order = orders[0];
+    if (!ELIGIBLE_STATUSES.includes(order.production_status) || order.is_deleted || order.deleted_at || order.archived_from_active_list) {
+      throw callingError('This order is no longer eligible for calling. Refresh the queue.', 409);
+    }
     const [requests] = await connection.execute('SELECT * FROM order_calling_requests WHERE request_id=?', [input.request_id]);
     const [states] = await connection.execute('SELECT calling_status, version FROM order_calling_state WHERE order_id=? FOR UPDATE', [orderId]);
     const state = states[0] || { calling_status: 'Not Called', version: 0 };
@@ -59,10 +71,6 @@ export async function updateCalling(connection, { orderId, agentId, body }) {
       }
       await connection.commit();
       return { calling_status: state.calling_status, calling_version: Number(state.version), replayed: true };
-    }
-    const order = orders[0];
-    if (!ELIGIBLE_STATUSES.includes(order.production_status) || order.is_deleted || order.deleted_at || order.archived_from_active_list) {
-      throw callingError('This order is no longer eligible for calling. Refresh the queue.', 409);
     }
     if (Number(state.version) !== input.expected_version) throw callingError('Another agent updated this order. Refresh before saving again.', 409);
     await connection.execute('INSERT INTO order_calling_requests (request_id, order_id, agent_id, payload_hash) VALUES (?, ?, ?, ?)',

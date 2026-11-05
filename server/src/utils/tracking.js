@@ -157,6 +157,7 @@ export const designAllowedStatuses = [
   { name: 'New', color: '#0EA5E9' },
   { name: 'Editing', color: '#10B981' },
   { name: 'Editing Done', color: '#8B5CF6' },
+  { name: 'Editing Send', color: '#06B6D4' },
   { name: 'Correction Send', color: '#F97316' },
   { name: 'Correction Done', color: '#84CC16' },
   { name: 'Save', color: '#A855F7' },

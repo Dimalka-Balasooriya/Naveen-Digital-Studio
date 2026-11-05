@@ -22,7 +22,12 @@ export default function CallingHistory({ orderId, revision = 0 }) {
       {data.history.map((item) => <div key={item.id} className="rounded-md border border-slate-200 p-3 text-sm">
         <p className="font-semibold">{item.previous_status} → {item.new_status}</p>
         <p className="text-xs text-slate-500">{item.agent_name || `Agent ${item.agent_id}`} · {new Date(item.changed_at).toLocaleString()}</p>
-        {item.notes ? <p className="mt-1 whitespace-pre-wrap text-slate-700">{item.notes}</p> : null}
+        {item.notes ? (
+          <div className="mt-1 text-slate-700">
+            {item.new_status === 'Correction (Call Agent)' ? <p className="font-semibold">Correction Note from Calling Agent</p> : null}
+            <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{item.notes}</p>
+          </div>
+        ) : null}
       </div>)}
       {!data.history.length ? <p className="text-sm text-slate-500">No calling status changes yet.</p> : null}
     </>}

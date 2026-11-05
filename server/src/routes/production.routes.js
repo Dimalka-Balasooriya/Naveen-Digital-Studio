@@ -111,7 +111,17 @@ router.get('/orders', async (req, res, next) => {
     await ensureOrderArchiveSupport();
     const params = {};
     const filters = ['COALESCE(o.archived_from_active_list, FALSE) = FALSE'];
-    if (isWorkerRole(req.user.role)) {
+    if (req.user.role === 'DESIGN_TEAM') {
+      filters.push(`COALESCE(o.is_deleted, FALSE) = FALSE AND o.deleted_at IS NULL AND (
+        o.assigned_employee_id = :employeeId
+        OR EXISTS (
+          SELECT 1 FROM order_assignments current_assignment
+          WHERE current_assignment.order_id = o.id
+            AND current_assignment.assigned_to_employee_id = :employeeId
+            AND COALESCE(current_assignment.is_current, TRUE) = TRUE
+        )
+      )`);
+    } else if (isWorkerRole(req.user.role)) {
       filters.push(`(
         o.assigned_employee_id = :employeeId
         OR EXISTS (
@@ -161,12 +171,23 @@ router.get('/orders', async (req, res, next) => {
         o.is_wholesale, o.wholesale_bill_id, o.assigned_employee_id, o.total_amount, o.advance_amount, o.production_progress, o.design_notes, o.status_id,
         c.name AS customer_name, c.phone AS customer_phone, p.name AS product_name,
         s.name AS status_name, s.color AS status_color,
+        ${req.user.role === 'DESIGN_TEAM' ? `
+          COALESCE(calling.calling_status, 'Not Called') AS calling_status,
+          CASE WHEN calling.calling_status = 'Correction (Call Agent)' THEN (
+            SELECT history.notes
+            FROM order_calling_history history
+            WHERE history.order_id = o.id
+            ORDER BY history.changed_at DESC, history.id DESC
+            LIMIT 1
+          ) END AS calling_correction_note,
+        ` : ''}
         admin.name AS assigned_by_admin_name, oa.assigned_to_employee_id AS current_assignment_employee_id, oa.assigned_by_role, oa.assignment_started_at AS assigned_at,
         oa.commission_amount AS assigned_commission
        FROM orders o
        JOIN customers c ON c.id = o.customer_id
        JOIN products p ON p.id = o.product_id
        JOIN order_statuses s ON s.id = o.status_id
+       ${req.user.role === 'DESIGN_TEAM' ? 'LEFT JOIN order_calling_state calling ON calling.order_id = o.id' : ''}
        ${assignmentJoin}
        LEFT JOIN employees admin ON admin.id = oa.assigned_by_admin_id
        ${where}
