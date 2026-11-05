@@ -93,9 +93,15 @@ export default function ProductionDashboard() {
 
   async function updateStatus(order, statusId) {
     if (!statusId) return;
-    const { data } = await api.patch(`/orders/${order.id}/status`, { status_id: Number(statusId), note: 'Updated by production employee' });
-    setNotice(data.message || 'Status updated.');
-    await load();
+    setError('');
+    setNotice('');
+    try {
+      const { data } = await api.patch(`/orders/${order.id}/status`, { status_id: Number(statusId), note: 'Updated by production employee' });
+      setNotice(data.message || 'Status updated.');
+      await load();
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || 'Order status could not be updated.');
+    }
   }
 
   async function markReminder(id) {

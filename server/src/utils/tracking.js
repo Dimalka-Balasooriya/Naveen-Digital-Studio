@@ -177,9 +177,8 @@ export async function ensureProductionAllowedStatuses({ connection = null, role 
   const allowedStatuses = allowedStatusesForRole(role);
   const existingRows = await run(
     connection,
-    `SELECT id, name, color, sort_order
-     FROM order_statuses
-     WHERE is_active = TRUE`
+    `SELECT name, sort_order
+     FROM order_statuses`
   );
   const existingByName = new Map(existingRows.map((status) => [normalizeStatusName(status.name), status]));
   let maxSortOrder = existingRows.reduce((max, status) => Math.max(max, Number(status.sort_order || 0)), 0);
@@ -191,7 +190,8 @@ export async function ensureProductionAllowedStatuses({ connection = null, role 
       await run(
         connection,
         `INSERT INTO order_statuses (name, color, sort_order, is_final, is_active)
-         VALUES (?, ?, ?, FALSE, TRUE)`,
+         VALUES (?, ?, ?, FALSE, TRUE)
+         ON DUPLICATE KEY UPDATE id = id`,
         [status.name, status.color, maxSortOrder]
       );
     }
@@ -211,7 +211,6 @@ export async function ensureProductionAllowedStatuses({ connection = null, role 
 }
 
 export async function isProductionAllowedStatus({ statusId, connection = null, role = 'DESIGN_TEAM' }) {
-  await ensureProductionAllowedStatuses({ connection, role });
   const rows = await run(connection, 'SELECT name FROM order_statuses WHERE id = ? AND is_active = TRUE', [statusId]);
   if (!rows.length) return false;
   const allowedNames = new Set(allowedStatusesForRole(role).map((status) => normalizeStatusName(status.name)));
