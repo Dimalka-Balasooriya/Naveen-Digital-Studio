@@ -3,6 +3,7 @@ import { api } from '../../services/api';
 import { Field, inputClass } from '../../components/FormFields';
 import CallingHistory from '../../components/CallingHistory';
 import CallNowButton from '../../components/CallNowButton';
+import { createRequestId } from '../../utils/requestId';
 
 const statuses = ['Not Called', 'No Answer', 'Call Back', 'Confirmed', 'Wrong Number', 'Completed', 'Correction (Call Agent)'];
 
@@ -22,9 +23,11 @@ function CallingOrder({ order, onSaved, onBusy, disabled }) {
     if (submitting.current || disabled) return;
     const payload = { status, notes: notes.trim(), expected_version: Number(order.calling_version) };
     const signature = JSON.stringify(payload);
-    if (request.current?.signature !== signature) request.current = { signature, body: { ...payload, request_id: crypto.randomUUID() } };
     submitting.current = true; setSaving(true); onBusy(1); setError(''); setNotice('');
     try {
+      if (request.current?.signature !== signature) {
+        request.current = { signature, body: { ...payload, request_id: createRequestId() } };
+      }
       const { data } = await api.patch(`/calling/orders/${order.id}/status`, request.current.body);
       request.current = null; setNotes(''); setNotice(data.message);
       onSaved();
