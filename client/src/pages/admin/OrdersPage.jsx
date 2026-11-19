@@ -783,6 +783,7 @@ export default function OrdersPage() {
   function orderPrintPageSize(size) {
     const normalized = String(size || 'A4').toUpperCase();
     if (normalized === 'A5') return 'A5 portrait';
+    if (normalized === 'A6') return '105mm 148mm';
     if (normalized === '80MM') return '80mm auto';
     if (normalized === '4X6') return '4in 6in';
     return 'A4 portrait';
@@ -837,6 +838,7 @@ export default function OrdersPage() {
     const courierName = selectedLookupName(lookups.couriers, form.courier_service_id, 'Not selected');
     const printSize = orderPrintPageSize(orderPrintSize);
     const isReceipt = orderPrintSize === '80MM';
+    const isA6 = orderPrintSize === 'A6';
     const waybillId = (form.tracking_number || editingOrder?.order_number || 'NDS-LABEL').trim();
     const totalAmount = Number(form.total_amount || 0);
     const advanceAmount = Number(form.advance_amount || 0);
@@ -852,7 +854,7 @@ export default function OrdersPage() {
         <head>
           <title>Special Bill ${escapeHtml(waybillId)}</title>
           <style>
-            @page { size: ${printSize}; margin: ${isReceipt ? '4mm' : '10mm'}; }
+            @page { size: ${printSize}; margin: ${isA6 ? '5mm' : isReceipt ? '4mm' : '10mm'}; }
             * { box-sizing: border-box; }
             body {
               margin: 0;
@@ -915,6 +917,20 @@ export default function OrdersPage() {
               text-align: center;
               border-top: 1px solid #ddd;
             }
+            ${isA6 ? `
+              body { font-size: 12px; }
+              .sheet { width: 95mm; }
+              .header { gap: 8px; padding: 6px 8px; }
+              .logo { width: 65px; }
+              .waybill { min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+              .section { padding: 6px 8px; }
+              .section h2 { margin-bottom: 5px; font-size: 14px; }
+              .line { font-size: 12px; line-height: 1.2; }
+              .cod { padding: 8px; font-size: 16px; }
+              .barcode-wrap { padding: 4px 8px 8px; }
+              .barcode { width: 65mm; max-width: 100%; }
+              .footer { padding: 5px; font-size: 9px; }
+            ` : ''}
             @media print { .no-print { display: none !important; } }
           </style>
         </head>
@@ -1539,6 +1555,7 @@ export default function OrdersPage() {
               >
                 <option value="A4">A4</option>
                 <option value="A5">A5</option>
+                <option value="A6">A6</option>
                 <option value="80MM">80mm Receipt</option>
                 <option value="4X6">4 x 6 Label</option>
               </select>
