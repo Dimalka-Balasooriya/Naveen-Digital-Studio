@@ -9,6 +9,7 @@ import SettingsPage from './pages/admin/SettingsPage';
 import EmployeesPage from './pages/admin/EmployeesPage';
 import ReportsPage from './pages/admin/ReportsPage';
 import ProductionDashboard from './pages/production/ProductionDashboard';
+import CorrectionPanel from './pages/production/CorrectionPanel';
 import HelpPage from './pages/HelpPage';
 import StockPage from './pages/StockPage';
 import MessagesPage from './pages/MessagesPage';
@@ -47,6 +48,7 @@ export default function App() {
         <Route path="admin/settings" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><SettingsPage /></ProtectedRoute>} />
         <Route path="calling" element={<ProtectedRoute roles={['CALLING_AGENT']}><CallingDashboard /></ProtectedRoute>} />
         <Route path="production" element={<ProtectedRoute roles={['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM', 'OWNER', 'CO_ADMIN']}><ProductionDashboard /></ProtectedRoute>} />
+        <Route path="correction" element={<ProtectedRoute roles={['DESIGN_TEAM']}><CorrectionPanel /></ProtectedRoute>} />
         <Route path="stock" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><StockPage /></ProtectedRoute>} />
         <Route path="messages" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM']}><MessagesPage /></ProtectedRoute>} />
         <Route path="commissions" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN', 'PRODUCTION_EMPLOYEE', 'DESIGN_TEAM']}><CommissionPage /></ProtectedRoute>} />

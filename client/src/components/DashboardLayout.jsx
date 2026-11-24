@@ -1,6 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { useEffect, useState } from 'react';
-import { BarChart3, Bell, Boxes, ClipboardList, FileSpreadsheet, HelpCircle, LogOut, Mail, Settings, Users, WalletCards, Warehouse } from 'lucide-react';
+import { BarChart3, Bell, Boxes, ClipboardList, FileSpreadsheet, HelpCircle, LogOut, Mail, Settings, Users, WalletCards, Warehouse, Wrench } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../services/api';
 import { isAdminRole, isCoAdmin, normalizeRole } from '../utils/roles';
@@ -28,10 +28,30 @@ const productionLinks = [
 export default function DashboardLayout() {
   const { user, logout } = useAuth();
   const isCallingAgent = normalizeRole(user?.role) === 'CALLING_AGENT';
-  const links = isCallingAgent ? [{ to: '/calling', label: 'Calling Agent', icon: ClipboardList }] : isAdminRole(user?.role) ? adminLinks : productionLinks;
+  const isDesigner = normalizeRole(user?.role) === 'DESIGN_TEAM';
+  const designerLinks = [productionLinks[0], { to: '/correction', label: 'Correction', icon: Wrench, badge: 'corrections' }, ...productionLinks.slice(1)];
+  const links = isCallingAgent ? [{ to: '/calling', label: 'Calling Agent', icon: ClipboardList }] : isAdminRole(user?.role) ? adminLinks : isDesigner ? designerLinks : productionLinks;
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [rearrangeReminders, setRearrangeReminders] = useState([]);
   const [unreadMessages, setUnreadMessages] = useState(0);
+  const [pendingCorrections, setPendingCorrections] = useState(null);
+
+  useEffect(() => {
+    if (!isDesigner) return undefined;
+    let controller;
+    const refresh = () => {
+      controller?.abort(); controller = new AbortController();
+      const signal = controller.signal;
+      api.get('/corrections/count', { signal }).then(({ data }) => {
+        if (!signal.aborted) setPendingCorrections(Number(data.pending_count));
+      }).catch(() => { if (!signal.aborted) setPendingCorrections(null); });
+    };
+    refresh();
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 15000);
+    window.addEventListener('focus', refresh);
+    window.addEventListener('nds-corrections-updated', refresh);
+    return () => { controller?.abort(); window.clearInterval(timer); window.removeEventListener('focus', refresh); window.removeEventListener('nds-corrections-updated', refresh); };
+  }, [isDesigner, user?.id]);
 
   useEffect(() => {
     if (!user || isCallingAgent) return undefined;
@@ -112,6 +132,8 @@ export default function DashboardLayout() {
                   <Icon size={18} />
                 </span>
                 <span className="flex-1">{label}</span>
+                {badge === 'corrections' ? <span aria-label={pendingCorrections === null ? 'Correction count unavailable' : `${pendingCorrections} pending corrections`}
+                  className="flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-600 px-1.5 text-xs font-semibold text-white">{pendingCorrections ?? '—'}</span> : null}
                 {badge === 'messages' && unreadMessages > 0 ? (
                   <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1.5 text-xs font-semibold text-white">
                     {unreadMessages}

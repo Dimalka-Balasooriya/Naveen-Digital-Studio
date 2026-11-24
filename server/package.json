@@ -5,6 +5,8 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
+    "test:corrections": "node --test test/corrections.test.js",
+    "test:corrections:integration": "node --test test/corrections-integration.test.js",
     "build": "node --check src/server.js",
     "dev": "nodemon src/server.js",
     "seed:admin": "node src/scripts/seed-admin.js",

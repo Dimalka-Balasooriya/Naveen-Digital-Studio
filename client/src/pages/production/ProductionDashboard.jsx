@@ -76,6 +76,29 @@ export default function ProductionDashboard() {
     return () => clearInterval(interval);
   }, [commissionMonth]);
 
+  // Other designers can complete shared corrections. Refresh existing assigned-order
+  // data without broadening visibility, changing filters or touching draft controls.
+  useEffect(() => {
+    if (!isDesignTeam) return undefined;
+    let controller;
+    const refreshOrders = () => {
+      controller?.abort(); controller = new AbortController();
+      const signal = controller.signal;
+      const correctionOnly = orderStatusFilter === 'correction';
+      api.get('/production/orders', { signal, params: {
+        status_id: correctionOnly ? undefined : orderStatusFilter || undefined,
+        status: correctionOnly ? 'Correction' : undefined
+      } }).then(({ data }) => {
+        if (!signal.aborted) setOrders(correctionOnly ? data.filter(order => order.status_name === 'Correction'
+          && (Number(order.assigned_employee_id) === Number(user.id) || Number(order.current_assignment_employee_id) === Number(user.id))) : data);
+      }).catch(() => {});
+    };
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') refreshOrders(); }, 15000);
+    window.addEventListener('focus', refreshOrders);
+    window.addEventListener('nds-corrections-updated', refreshOrders);
+    return () => { controller?.abort(); window.clearInterval(timer); window.removeEventListener('focus', refreshOrders); window.removeEventListener('nds-corrections-updated', refreshOrders); };
+  }, [isDesignTeam, user?.id, orderStatusFilter]);
+
   const filteredCommissions = allCommissions.filter((item) =>
     item.employee_name.toLowerCase().includes(commissionSearch.toLowerCase())
   );
