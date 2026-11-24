@@ -14,6 +14,7 @@ const adminLinks = [
   { to: '/messages', label: 'Messages', icon: Mail, badge: 'messages' },
   { to: '/commissions', label: 'Commission', icon: WalletCards },
   { to: '/admin/reports', label: 'Reports', icon: FileSpreadsheet },
+  { to: '/admin/designer-performance', label: 'Designer Performance Report', icon: BarChart3 },
   { to: '/admin/settings', label: 'Settings', icon: Settings },
   { to: '/help', label: 'Help', icon: HelpCircle }
 ];

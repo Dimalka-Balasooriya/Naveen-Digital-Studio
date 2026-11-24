@@ -5,6 +5,8 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
+    "test:designer-performance": "node --test test/designer-performance.test.js",
+    "test:designer-performance:integration": "node --test test/designer-performance-integration.test.js",
     "test:corrections": "node --test test/corrections.test.js",
     "test:corrections:integration": "node --test test/corrections-integration.test.js",
     "build": "node --check src/server.js",

@@ -8,6 +8,7 @@ import OrdersPage from './pages/admin/OrdersPage';
 import SettingsPage from './pages/admin/SettingsPage';
 import EmployeesPage from './pages/admin/EmployeesPage';
 import ReportsPage from './pages/admin/ReportsPage';
+import DesignerPerformanceReport from './pages/admin/DesignerPerformanceReport';
 import ProductionDashboard from './pages/production/ProductionDashboard';
 import CorrectionPanel from './pages/production/CorrectionPanel';
 import HelpPage from './pages/HelpPage';
@@ -45,6 +46,7 @@ export default function App() {
         <Route path="admin/orders" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><OrdersPage /></ProtectedRoute>} />
         <Route path="admin/employees" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><EmployeesPage /></ProtectedRoute>} />
         <Route path="admin/reports" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><ReportsPage /></ProtectedRoute>} />
+        <Route path="admin/designer-performance" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><DesignerPerformanceReport /></ProtectedRoute>} />
         <Route path="admin/settings" element={<ProtectedRoute roles={['OWNER', 'CO_ADMIN']}><SettingsPage /></ProtectedRoute>} />
         <Route path="calling" element={<ProtectedRoute roles={['CALLING_AGENT']}><CallingDashboard /></ProtectedRoute>} />
         <Route path="production" element={<ProtectedRoute roles={['PRODUCTION_EMPLOYEE', 'DESIGN_TEAM', 'OWNER', 'CO_ADMIN']}><ProductionDashboard /></ProtectedRoute>} />
